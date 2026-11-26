@@ -324,8 +324,9 @@ function decideTools(text) {
     const words = t.split(/\s+/).filter(Boolean).length;
     const live = /\b(today|tonight|yesterday|tomorrow|this (week|weekend|month|year)|right now|currently|current|latest|recent|newest|new|upcoming|202[4-9]|price|prices|cost|how much|who won|score|scores|game|release date|released|open now|hours|near me|stock|search|look up|google|who is|who's|what is|what's|when is|when does|when did|where is|is .+ still|did .+ (die|win|lose)|ceo of|president|election|update)\b/.test(t);
     const casual = /^(hi|hey|yo|sup|wassup|thanks|thank you|ok|okay|lol|lmao|bet|cool|nice|good (morning|night|afternoon))\b/.test(t) && words <= 5;
-    if (live && !casual && words >= 2) tools.push(['web', () => toolWeb(text)]);
-    if (live && !casual && /\b(won|win|score|scores|beat|lost|game|match|fight|final)\b/.test(t)) tools.push(['news', () => toolNews(text)]);
+    const sports = /\b(won|win|score|scores|beat|lost|game|match|fight|final)\b/.test(t);
+    // sports: latest news only (web results often show older games); web search only if no news is found
+    if (live && !casual && words >= 2) tools.push(sports ? ['news', () => toolNews(text).catch(() => toolWeb(text))] : ['web', () => toolWeb(text)]);
   }
   return tools;
 }
@@ -579,7 +580,7 @@ async function send() {
     }
     // answer
     const codeMode = $('#codeChip').getAttribute('aria-pressed') === 'true';
-    const userContent = (live ? 'LIVE INFO (fetched just now):\n' + clip(live, IS_PHONE ? 2400 : 5000) + '\n\n(Answer using the LIVE INFO above. It is real and current. If it lists headlines or results, summarize the most relevant ones.)\n---\n' : '') + (rem ? text + '\n(I saved this to memory. Confirm briefly.)' : text);
+    const userContent = (live ? 'LIVE INFO (fetched just now):\n' + clip(live, IS_PHONE ? 2400 : 5000) + '\n\n(Answer using the LIVE INFO above. It is real and current. If it lists headlines or results, summarize the most relevant ones, and prefer the newest dated item.)\n---\n' : '') + (rem ? text + '\n(I saved this to memory. Confirm briefly.)' : text);
     const hist = historyFor(IS_PHONE ? (live ? 1200 : 2600) : (live ? 3500 : 6000));
     hist.pop(); // drop the current user turn (already added) — we send the enriched version
     const messages = [{ role: 'system', content: systemPrompt(codeMode) }, ...hist, { role: 'user', content: userContent }];
