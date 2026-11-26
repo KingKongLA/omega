@@ -206,7 +206,12 @@ function nowLine() {
 }
 
 // ---------------- live info (free, no keys) ----------------
-async function fetchT(url, { ms = 9000, type = 'json' } = {}) {
+// one automatic retry when a source is slow or the connection blips (not when it answers with an error)
+async function fetchT(url, o = {}) {
+  try { return await fetchOnce(url, o); }
+  catch (e) { if (/^HTTP 4/.test(e.message) || navigator.onLine === false) throw e; return await fetchOnce(url, o); }
+}
+async function fetchOnce(url, { ms = 9000, type = 'json' } = {}) {
   const c = new AbortController(); const t = setTimeout(() => c.abort(), ms);
   try {
     const r = await fetch(url, { signal: c.signal });
