@@ -1,6 +1,6 @@
 // Offline support: keeps OMEGA's app files and the brain engine (wllama) on the device.
 // The brain itself is saved by wllama in the browser's private file storage.
-const CACHE = 'omega-shell-v11';
+const CACHE = 'omega-shell-v12';
 const ENGINE = 'omega-engine-v1';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'worker.js', 'manifest.webmanifest', 'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
