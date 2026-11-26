@@ -4,17 +4,23 @@ const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.89';
 const PROXY = 'https://proxy.cors.dev/';
 const VERSION = '1.0.0';
 
+// memMB = GPU memory WebLLM estimates at a 4K context. iPhones cap a browser tab at about 1.5 GB in total,
+// so only brains under ~1 GB are allowed there (others crash the tab and Safari reloads the page).
 const MODELS = [
-  { key: 'qwen3-1.7b', name: 'Qwen3 1.7B', f16: 'Qwen3-1.7B-q4f16_1-MLC', f32: 'Qwen3-1.7B-q4f32_1-MLC', mem: '2.0 GB', desc: 'Recommended for iPhone. Fast and pretty smart.', thinking: true },
-  { key: 'llama-3.2-3b', name: 'Llama 3.2 3B', f16: 'Llama-3.2-3B-Instruct-q4f16_1-MLC', f32: 'Llama-3.2-3B-Instruct-q4f32_1-MLC', mem: '2.3 GB', desc: 'More natural conversation. A little slower.' },
-  { key: 'qwen3-4b', name: 'Qwen3 4B', f16: 'Qwen3-4B-q4f16_1-MLC', f32: 'Qwen3-4B-q4f32_1-MLC', mem: '3.4 GB', desc: 'Smartest. Needs a lot of memory, may not load on every phone.', thinking: true },
-  { key: 'coder-3b', name: 'Qwen2.5 Coder 3B', f16: 'Qwen2.5-Coder-3B-Instruct-q4f16_1-MLC', f32: 'Qwen2.5-Coder-3B-Instruct-q4f32_1-MLC', mem: '2.5 GB', desc: 'Best for writing and fixing code.' },
-  { key: 'llama-3.2-1b', name: 'Llama 3.2 1B (Lite)', f16: 'Llama-3.2-1B-Instruct-q4f16_1-MLC', f32: 'Llama-3.2-1B-Instruct-q4f32_1-MLC', mem: '0.9 GB', desc: 'Lightest brain that still chats well. Safest on iPhone.' },
-  { key: 'qwen3-0.6b', name: 'Qwen3 0.6B', f16: 'Qwen3-0.6B-q4f16_1-MLC', f32: 'Qwen3-0.6B-q4f32_1-MLC', mem: '1.4 GB', desc: 'Tiny and very fast.', thinking: true },
+  { key: 'llama-3.2-1b', name: 'Llama 3.2 1B', f16: 'Llama-3.2-1B-Instruct-q4f16_1-MLC', f32: 'Llama-3.2-1B-Instruct-q4f32_1-MLC', memMB: 880, desc: 'Best brain for iPhone. Natural chat, fast.' },
+  { key: 'qwen2.5-0.5b', name: 'Qwen2.5 0.5B (Mini)', f16: 'Qwen2.5-0.5B-Instruct-q4f16_1-MLC', f32: 'Qwen2.5-0.5B-Instruct-q4f32_1-MLC', memMB: 945, desc: 'Very small and quick. Use if Llama 1B has trouble.' },
+  { key: 'smollm2-360m', name: 'SmolLM2 360M (Tiny)', f16: 'SmolLM2-360M-Instruct-q4f16_1-MLC', f32: 'SmolLM2-360M-Instruct-q4f32_1-MLC', memMB: 380, desc: 'Emergency backup for older phones. Simple answers only.' },
+  { key: 'qwen3-1.7b', name: 'Qwen3 1.7B', f16: 'Qwen3-1.7B-q4f16_1-MLC', f32: 'Qwen3-1.7B-q4f32_1-MLC', memMB: 2040, desc: 'Smarter. For computers.', thinking: true },
+  { key: 'llama-3.2-3b', name: 'Llama 3.2 3B', f16: 'Llama-3.2-3B-Instruct-q4f16_1-MLC', f32: 'Llama-3.2-3B-Instruct-q4f32_1-MLC', memMB: 2260, desc: 'Very natural conversation. For computers.' },
+  { key: 'coder-3b', name: 'Qwen2.5 Coder 3B', f16: 'Qwen2.5-Coder-3B-Instruct-q4f16_1-MLC', f32: 'Qwen2.5-Coder-3B-Instruct-q4f32_1-MLC', memMB: 2500, desc: 'Best for code. For computers.' },
+  { key: 'qwen3-4b', name: 'Qwen3 4B', f16: 'Qwen3-4B-q4f16_1-MLC', f32: 'Qwen3-4B-q4f32_1-MLC', memMB: 3430, desc: 'Smartest. Needs a computer with a good graphics card.', thinking: true },
 ];
 // if a brain crashes (out of memory), OMEGA falls back to the next lighter one
-const LIGHTER = { 'qwen3-4b': 'qwen3-1.7b', 'llama-3.2-3b': 'qwen3-1.7b', 'coder-3b': 'qwen3-1.7b', 'qwen3-1.7b': 'llama-3.2-1b', 'llama-3.2-1b': 'qwen3-0.6b' };
+const LIGHTER = { 'qwen3-4b': 'qwen3-1.7b', 'llama-3.2-3b': 'qwen3-1.7b', 'coder-3b': 'qwen3-1.7b', 'qwen3-1.7b': 'llama-3.2-1b', 'llama-3.2-1b': 'qwen2.5-0.5b', 'qwen2.5-0.5b': 'smollm2-360m' };
 const IS_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
+const IS_IOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
+const PHONE_MAX_MB = 1000;
+const fitsDevice = m => !IS_IOS || m.memMB <= PHONE_MAX_MB;
 const CTX = IS_PHONE ? 2048 : 4096; // smaller working memory on phones = far less RAM
 const isGpuCrash = e => /device (was )?lost|disposed|external instance|mapAsync|GPUDevice|out of memory|OOM|allocation|WebGPU.*lost|Instance reference/i.test(String((e && e.message) || e));
 
@@ -35,6 +41,9 @@ let lessons = store.get('lessons', []);
 let liked = store.get('liked', []);
 let chats = store.get('chats', []);
 let settings = store.get('settings', { model: IS_PHONE ? 'llama-3.2-1b' : 'qwen3-1.7b', live: true });
+if (!MODELS.some(m => m.key === settings.model)) settings.model = IS_PHONE ? 'llama-3.2-1b' : 'qwen3-1.7b';
+// a brain that is too big for this iPhone would crash the tab, so switch it before it ever loads
+if (IS_IOS && !fitsDevice(MODELS.find(m => m.key === settings.model))) { settings.model = 'llama-3.2-1b'; store.set('settings', settings); }
 let crashNote = '';
 // crash-loop protection: if Safari killed the page while the brain was loading or answering, use a lighter brain
 (() => { const f = store.get('inflight', null); if (f && Date.now() - f.t < 10 * 60 * 1000 && LIGHTER[f.model]) { const from = f.model; settings.model = LIGHTER[from]; store.set('settings', settings); crashNote = `Last time your device ran out of memory, so OMEGA switched to a lighter brain.`; } store.set('inflight', null); })();
@@ -150,12 +159,13 @@ function parseRSS(xml, n) {
 }
 function bingLink(l) { const m = l.match(/[?&]url=([^&]+)/); return m ? decodeURIComponent(m[1]) : l; }
 async function toolNews(text) {
-  const q = text.replace(/\b(news|latest|headlines?|what'?s|whats|happening|give me|show me|tell me|the|about|on|any|today|right now|update|updates|in the)\b/gi, ' ').replace(/[?!.]/g, ' ').replace(/\s+/g, ' ').trim();
+  const q = text.replace(/\b(news|latest|headlines?|what'?s|whats|happening|give me|show me|tell me|the|a|an|about|on|any|today|tonight|yesterday|last night|right now|update|updates|in the|who|what|when|where|did|does|do|is|was|were|are|won|win|score|of|for|please|bro|hey|yo|omega)\b/gi, ' ').replace(/[?!.,]/g, ' ').replace(/\s+/g, ' ').trim();
   let items = [];
   if (q.length > 2) {
     try { items = parseRSS(await fetchT(PROXY + 'https://www.bing.com/news/search?q=' + encodeURIComponent(q) + '&format=rss', { type: 'text', ms: 12000 }), 8).map(x => ({ ...x, link: bingLink(x.link) })); } catch (e) { }
     if (!items.length) { try { items = parseRSS(await fetchT(PROXY + `https://news.google.com/rss/search?q=${encodeURIComponent(q + ' when:7d')}&hl=en-US&gl=US&ceid=US:en`, { type: 'text' }), 8); } catch (e) { } }
   }
+  if (!items.length && q.length > 2) throw new Error('No news found about ' + q);
   if (!items.length) { try { items = parseRSS(await fetchT('https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml', { type: 'text' }), 8).map(x => ({ ...x, source: x.source || 'New York Times' })); } catch (e) { } }
   if (!items.length) { try { items = parseRSS(await fetchT(PROXY + 'https://www.bing.com/news/search?q=' + encodeURIComponent('top stories today') + '&format=rss', { type: 'text', ms: 12000 }), 8).map(x => ({ ...x, link: bingLink(x.link) })); } catch (e) { } }
   if (!items.length) throw new Error('No news sources answered');
@@ -274,6 +284,7 @@ function decideTools(text) {
     const live = /\b(today|tonight|yesterday|tomorrow|this (week|weekend|month|year)|right now|currently|current|latest|recent|newest|new|upcoming|202[4-9]|price|prices|cost|how much|who won|score|scores|game|release date|released|open now|hours|near me|stock|search|look up|google|who is|who's|what is|what's|when is|when does|when did|where is|is .+ still|did .+ (die|win|lose)|ceo of|president|election|update)\b/.test(t);
     const casual = /^(hi|hey|yo|sup|wassup|thanks|thank you|ok|okay|lol|lmao|bet|cool|nice|good (morning|night|afternoon))\b/.test(t) && words <= 5;
     if (live && !casual && words >= 2) tools.push(['web', () => toolWeb(text)]);
+    if (live && !casual && /\b(won|win|score|scores|beat|lost|game|match|fight|final)\b/.test(t)) tools.push(['news', () => toolNews(text)]);
   }
   return tools;
 }
@@ -295,6 +306,7 @@ async function isCached(m) { try { const w = await getWebLLM(); return await w.h
 function setStatus(t) { const s = $('#brainStatus'); s.textContent = t || ''; s.hidden = !t; }
 function loadBrain(key, onProgress) {
   if (loading) return loading;
+  if (!fitsDevice(modelOf(key))) key = 'llama-3.2-1b';
   loading = (async () => {
     const g = await gpuCheck(); if (!g.ok) throw new Error(g.why);
     const w = await getWebLLM();
@@ -367,7 +379,7 @@ async function refreshWelcome() {
     const cached = g.ok && await isCached(m);
     if (!g.ok) setup = `<div class="setup"><h2>This device can't run OMEGA's brain yet</h2><p>${esc(g.why)}</p></div>`;
     else if (cached) { setup = `<div class="setup"><h2>Waking up OMEGA…</h2><p>Loading ${esc(m.name)} from your phone. This takes a few seconds.</p></div>`; if (!loading) loadBrain(m.key).catch(e => showSetupError(e)); }
-    else setup = `<div class="setup"><h2>One-time setup</h2><p>OMEGA's brain (${esc(m.name)}) downloads to this phone once, then runs offline. Use Wi-Fi: it's about 1–2 GB. Keep this page open while it downloads.</p><button class="btn pri" id="setupGo">Download OMEGA's brain</button><div class="bar" id="setupBarWrap" hidden><div class="fill" id="setupBar"></div></div><p class="hint" id="setupText" style="margin-top:8px"></p></div>`;
+    else setup = `<div class="setup"><h2>One-time setup</h2><p>OMEGA's brain (${esc(m.name)}) downloads to this phone once, then runs offline. Use Wi-Fi: it's about ${IS_PHONE ? '700 MB' : '1–2 GB'}. Keep this page open while it downloads.</p><button class="btn pri" id="setupGo">Download OMEGA's brain</button><div class="bar" id="setupBarWrap" hidden><div class="fill" id="setupBar"></div></div><p class="hint" id="setupText" style="margin-top:8px"></p></div>`;
   }
   if (chat) return;
   col.innerHTML = `${crashNote ? `<div class="err" style="max-width:520px;margin:8px auto">${esc(crashNote)}</div>` : ''}<div class="welcome"><div class="big">Ω</div><h1>${esc(greet())}${first}</h1><p>${engine ? 'What do you want to get done?' : 'Your own AI, running on your phone.'}</p>${setup}${engine ? `<div class="sugg">${SUGG.map((s, i) => `<button data-s="${i}"><b>${esc(s[0])}</b><span>${esc(s[1])}</span></button>`).join('')}</div>` : ''}</div>`;
@@ -557,7 +569,8 @@ async function renderSettings() {
   const g = await gpuCheck();
   $('#gpuInfo').textContent = g.ok ? (engine ? `Running ${modelOf(loadedKey).name} on this device's graphics chip.` : 'This device can run OMEGA. Pick a brain and load it.') : g.why;
   const rows = await Promise.all(MODELS.map(async m => ({ m, cached: g.ok && await isCached(m) })));
-  $('#models').innerHTML = rows.map(({ m, cached }) => `<label class="model ${pick === m.key ? 'on' : ''}"><input type="radio" name="model" value="${m.key}" ${pick === m.key ? 'checked' : ''}><div><b>${esc(m.name)}${loadedKey === m.key ? ' · running' : cached ? ' · downloaded' : ''}</b><span>${esc(m.desc)} Needs about ${m.mem} of memory.</span></div></label>`).join('');
+  if (!fitsDevice(modelOf(pick))) pick = settings.model;
+  $('#models').innerHTML = rows.map(({ m, cached }) => { const ok = fitsDevice(m); return `<label class="model ${pick === m.key ? 'on' : ''}" ${ok ? '' : 'style="opacity:.5"'}><input type="radio" name="model" value="${m.key}" ${pick === m.key ? 'checked' : ''} ${ok ? '' : 'disabled'}><div><b>${esc(m.name)}${loadedKey === m.key ? ' · running' : cached ? ' · downloaded' : ''}</b><span>${esc(m.desc)} Uses about ${(m.memMB / 1000).toFixed(1)} GB of memory.${ok ? '' : ' Too big for iPhone: Safari would crash.'}</span></div></label>`; }).join('');
   $('#models').querySelectorAll('input').forEach(i => i.onchange = () => { pick = i.value; renderSettings(); });
   $('#loadBtn').disabled = !g.ok || loadedKey === pick;
   $('#loadHint').textContent = loadedKey === pick ? 'Already running.' : '';
