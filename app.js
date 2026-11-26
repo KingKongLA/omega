@@ -315,7 +315,7 @@ function decideTools(text) {
   const t = text.toLowerCase(), tools = [];
   const url = (text.match(/https?:\/\/[^\s)]+/) || [])[0];
   if (url) tools.push(['read', () => toolRead(url)]);
-  if (/\b(what time|time is it|the time|time in|time at|clock)\b/.test(t)) tools.push(['time', () => toolTime(text)]);
+  if (/\b(what time|time is it|the time|time in|time at|clock|what day|which day|what'?s the date|what is the date|today'?s date|date today|what date|what year|day is it)\b/.test(t)) tools.push(['time', () => toolTime(text)]);
   if (/\b(weather|temperature|forecast|raining|rain today|rain tomorrow|snow|humid|how hot|how cold|degrees outside|sunny)\b/.test(t)) tools.push(['weather', () => toolWeather(text)]);
   if (/\b(bitcoin|btc|ethereum|eth|crypto|solana|dogecoin|doge|xrp|cardano|litecoin|shiba|pepe)\b/.test(t) && /\b(price|worth|cost|how much|value|at|today|now|up|down)\b/.test(t)) tools.push(['crypto', () => toolCrypto(text)]);
   if (currencyPair(text)) tools.push(['currency', () => toolCurrency(text)]);
@@ -428,18 +428,17 @@ async function dropEngine() { const e = engine; engine = null; loadedKey = null;
 const thinkStrip = t => t.replace(/<think>[\s\S]*?<\/think>\s*/g, '').replace(/<think>[\s\S]*$/, '');
 
 // ---------------- prompt ----------------
-function systemPrompt(codeMode) {
+function systemPrompt(codeMode, hasLive) {
   const name = profile.name || 'the user';
   const f = facts.slice(-30).map(x => '- ' + x).join('\n');
   const l = lessons.slice(-6).map(x => `- When asked "${clip(x.q, 120)}", ${name} said: ${clip(x.fix, 300)}`).join('\n');
   return [
-    `You are OMEGA, ${name}'s personal AI. Talk like a real person texting a friend who happens to know a lot: casual, warm, direct, no corporate tone. Short answers for simple stuff, more detail when it's needed.`,
+    `You are OMEGA, ${name}'s personal AI assistant. You are an AI, not a person: never invent a personal life, feelings, plans or stories about yourself. Your job is to help ${name}. Talk in a casual, warm, direct way, like a helpful friend texting back. Reply to exactly what ${name} said. Short answers for simple stuff, more detail when it's needed.`,
     profile.style ? `How ${name} wants you to talk: ${profile.style}` : '',
     profile.about ? `About ${name}: ${profile.about}` : '',
     f ? `Things to remember about ${name}:\n${f}` : '',
     l ? `Feedback ${name} gave you before (follow it):\n${l}` : '',
-    nowLine() + (profile.city ? ` ${name} is usually in ${profile.city}.` : ''),
-    'When LIVE INFO is given in a message, it was fetched from the internet just now: answer from it, copy numbers, times and names exactly as written, and name the source. Never say you cannot access the internet or real-time info when LIVE INFO is provided. If you truly do not know something, say so instead of making it up.',
+    hasLive ? 'The message includes LIVE INFO fetched from the internet just now: answer from it, copy numbers, times and names exactly as written, and name the source.' : 'If you do not know something, say so instead of making it up.',
     codeMode ? 'CODING MODE: write complete, working code in fenced code blocks with a language tag (```html, ```javascript, ```python). For apps, prefer one self-contained HTML file. JavaScript runs in a worker (use console.log). Explain briefly how to use it.' : '',
   ].filter(Boolean).join('\n\n');
 }
@@ -583,7 +582,7 @@ async function send() {
     const userContent = (live ? 'LIVE INFO (fetched just now):\n' + clip(live, IS_PHONE ? 2400 : 5000) + '\n\n(Answer using the LIVE INFO above. It is real and current. If it lists headlines or results, summarize the most relevant ones, and prefer the newest dated item.)\n---\n' : '') + (rem ? text + '\n(I saved this to memory. Confirm briefly.)' : text);
     const hist = historyFor(IS_PHONE ? (live ? 1200 : 2600) : (live ? 3500 : 6000));
     hist.pop(); // drop the current user turn (already added) — we send the enriched version
-    const messages = [{ role: 'system', content: systemPrompt(codeMode) }, ...hist, { role: 'user', content: userContent }];
+    const messages = [{ role: 'system', content: systemPrompt(codeMode, !!live) }, ...hist, { role: 'user', content: userContent }];
     const opts = { temperature: codeMode ? 0.3 : 0.7, maxTokens: IS_PHONE ? (codeMode ? 900 : 500) : (codeMode ? 1500 : 800), onText: out => { const shown = thinkStrip(out); if (shown) { render(ui.ans, shown); toBottom(); } } };
     const run = async msgs => thinkStrip(await engine.chat(msgs, opts)).trim();
     store.set('inflight', { model: loadedKey, t: Date.now(), what: 'answer' });
@@ -596,7 +595,7 @@ async function send() {
         if (!to) { turn.text = fallback("I ran out of memory on this device. Close other tabs and apps, then try again."); render(ui.ans, turn.text); return; }
         ui.work.hidden = false; ui.wt.textContent = `Out of memory. Switching to ${modelOf(to).name}…`;
         await loadBrain(to, p => { ui.wt.textContent = `Out of memory. Loading ${modelOf(to).name}… ${Math.round((p.progress || 0) * 100)}%`; });
-        messages[0].content = systemPrompt(codeMode);
+        messages[0].content = systemPrompt(codeMode, !!live);
         store.set('inflight', { model: loadedKey, t: Date.now(), what: 'answer' });
         turn.text = await run(messages.slice(0, 1).concat([{ role: 'user', content: clip(userContent, 2000) }]));
         ui.wt.textContent = `Switched to ${modelOf(loadedKey).name} to save memory`;
