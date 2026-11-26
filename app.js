@@ -9,8 +9,14 @@ const MODELS = [
   { key: 'llama-3.2-3b', name: 'Llama 3.2 3B', f16: 'Llama-3.2-3B-Instruct-q4f16_1-MLC', f32: 'Llama-3.2-3B-Instruct-q4f32_1-MLC', mem: '2.3 GB', desc: 'More natural conversation. A little slower.' },
   { key: 'qwen3-4b', name: 'Qwen3 4B', f16: 'Qwen3-4B-q4f16_1-MLC', f32: 'Qwen3-4B-q4f32_1-MLC', mem: '3.4 GB', desc: 'Smartest. Needs a lot of memory, may not load on every phone.', thinking: true },
   { key: 'coder-3b', name: 'Qwen2.5 Coder 3B', f16: 'Qwen2.5-Coder-3B-Instruct-q4f16_1-MLC', f32: 'Qwen2.5-Coder-3B-Instruct-q4f32_1-MLC', mem: '2.5 GB', desc: 'Best for writing and fixing code.' },
-  { key: 'qwen3-0.6b', name: 'Qwen3 0.6B', f16: 'Qwen3-0.6B-q4f16_1-MLC', f32: 'Qwen3-0.6B-q4f32_1-MLC', mem: '1.4 GB', desc: 'Tiny and very fast. For older phones.', thinking: true },
+  { key: 'llama-3.2-1b', name: 'Llama 3.2 1B (Lite)', f16: 'Llama-3.2-1B-Instruct-q4f16_1-MLC', f32: 'Llama-3.2-1B-Instruct-q4f32_1-MLC', mem: '0.9 GB', desc: 'Lightest brain that still chats well. Safest on iPhone.' },
+  { key: 'qwen3-0.6b', name: 'Qwen3 0.6B', f16: 'Qwen3-0.6B-q4f16_1-MLC', f32: 'Qwen3-0.6B-q4f32_1-MLC', mem: '1.4 GB', desc: 'Tiny and very fast.', thinking: true },
 ];
+// if a brain crashes (out of memory), OMEGA falls back to the next lighter one
+const LIGHTER = { 'qwen3-4b': 'qwen3-1.7b', 'llama-3.2-3b': 'qwen3-1.7b', 'coder-3b': 'qwen3-1.7b', 'qwen3-1.7b': 'llama-3.2-1b', 'llama-3.2-1b': 'qwen3-0.6b' };
+const IS_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
+const CTX = IS_PHONE ? 2048 : 4096; // smaller working memory on phones = far less RAM
+const isGpuCrash = e => /device (was )?lost|disposed|external instance|mapAsync|GPUDevice|out of memory|OOM|allocation|WebGPU.*lost|Instance reference/i.test(String((e && e.message) || e));
 
 // ---------------- small helpers ----------------
 const $ = s => document.querySelector(s);
@@ -28,7 +34,10 @@ let facts = store.get('facts', []);
 let lessons = store.get('lessons', []);
 let liked = store.get('liked', []);
 let chats = store.get('chats', []);
-let settings = store.get('settings', { model: 'qwen3-1.7b', live: true });
+let settings = store.get('settings', { model: IS_PHONE ? 'llama-3.2-1b' : 'qwen3-1.7b', live: true });
+let crashNote = '';
+// crash-loop protection: if Safari killed the page while the brain was loading or answering, use a lighter brain
+(() => { const f = store.get('inflight', null); if (f && Date.now() - f.t < 10 * 60 * 1000 && LIGHTER[f.model]) { const from = f.model; settings.model = LIGHTER[from]; store.set('settings', settings); crashNote = `Last time your device ran out of memory, so OMEGA switched to a lighter brain.`; } store.set('inflight', null); })();
 let chat = null, busy = false, stopFlag = false;
 let webllm = null, engine = null, loadedKey = null, loading = null, hasF16 = null;
 const codes = {}; let seq = 0;
@@ -139,14 +148,46 @@ function parseRSS(xml, n) {
     return { title: g('title').trim(), link: g('link').trim(), date: g('pubDate').trim(), source: g('source').trim() };
   }).filter(x => x.title);
 }
+function bingLink(l) { const m = l.match(/[?&]url=([^&]+)/); return m ? decodeURIComponent(m[1]) : l; }
 async function toolNews(text) {
-  const q = text.replace(/\b(news|latest|headlines?|what'?s|whats|happening|give me|show me|tell me|the|about|on|any|today|right now|update|updates)\b/gi, ' ').replace(/[?!.]/g, ' ').replace(/\s+/g, ' ').trim();
-  const url = q.length > 2 ? `https://news.google.com/rss/search?q=${encodeURIComponent(q + ' when:7d')}&hl=en-US&gl=US&ceid=US:en` : 'https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en';
+  const q = text.replace(/\b(news|latest|headlines?|what'?s|whats|happening|give me|show me|tell me|the|about|on|any|today|right now|update|updates|in the)\b/gi, ' ').replace(/[?!.]/g, ' ').replace(/\s+/g, ' ').trim();
   let items = [];
-  try { items = parseRSS(await fetchT(PROXY + url, { type: 'text' }), 8); } catch (e) { }
+  if (q.length > 2) {
+    try { items = parseRSS(await fetchT(PROXY + 'https://www.bing.com/news/search?q=' + encodeURIComponent(q) + '&format=rss', { type: 'text', ms: 12000 }), 8).map(x => ({ ...x, link: bingLink(x.link) })); } catch (e) { }
+    if (!items.length) { try { items = parseRSS(await fetchT(PROXY + `https://news.google.com/rss/search?q=${encodeURIComponent(q + ' when:7d')}&hl=en-US&gl=US&ceid=US:en`, { type: 'text' }), 8); } catch (e) { } }
+  }
   if (!items.length) { try { items = parseRSS(await fetchT('https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml', { type: 'text' }), 8).map(x => ({ ...x, source: x.source || 'New York Times' })); } catch (e) { } }
+  if (!items.length) { try { items = parseRSS(await fetchT(PROXY + 'https://www.bing.com/news/search?q=' + encodeURIComponent('top stories today') + '&format=rss', { type: 'text', ms: 12000 }), 8).map(x => ({ ...x, link: bingLink(x.link) })); } catch (e) { } }
   if (!items.length) throw new Error('No news sources answered');
-  return { label: 'News', text: `NEWS${q.length > 2 ? ' about "' + q + '"' : ' (top headlines)'} (live):\n` + items.map((x, i) => `${i + 1}. ${x.title}${x.source && !x.title.includes(x.source) ? ' — ' + x.source : ''}${x.date ? ' (' + x.date.replace(/:\d\d GMT$/, ' GMT') + ')' : ''}`).join('\n'), sources: items.filter(x => /^https:\/\//.test(x.link)).slice(0, 5).map(x => ({ title: x.source || x.title, url: x.link })) };
+  const srcName = x => x.source || (() => { try { return new URL(x.link).hostname.replace(/^www\./, ''); } catch (e) { return ''; } })();
+  return { label: 'News', text: `NEWS${q.length > 2 ? ' about "' + q + '"' : ' (top headlines)'} (live):\n` + items.map((x, i) => `${i + 1}. ${x.title}${srcName(x) && !x.title.includes(srcName(x)) ? ' — ' + srcName(x) : ''}${x.date ? ' (' + x.date.replace(/ [+-]\d{4}$| GMT$/, '') + ')' : ''}`).join('\n'), sources: items.filter(x => /^https:\/\//.test(x.link)).slice(0, 5).map(x => ({ title: srcName(x) || x.title, url: x.link })) };
+}
+// Pull clean results out of a search page that Jina Reader turned into markdown (works for DuckDuckGo, Yahoo and others).
+const ENGINE_HOSTS = /(^|\.)(duckduckgo\.com|yahoo\.com|yimg\.com|bing\.com|google\.com|jina\.ai|startpage\.com|brave\.com|msn\.com\/search)$/i;
+function unwrapUrl(u) {
+  let m = u.match(/[?&]uddg=([^&]+)/); if (m) return decodeURIComponent(m[1]);
+  m = u.match(/\/RU=([^/]+)\/R[KS]=/); if (m) return decodeURIComponent(m[1]);
+  m = u.match(/[?&]u=a1([^&]+)/); if (m) { try { return atob(m[1].replace(/-/g, '+').replace(/_/g, '/')); } catch (e) { } }
+  return u;
+}
+function parseSearchMarkdown(md) {
+  const body = md.includes('Markdown Content:') ? md.split('Markdown Content:').pop() : md;
+  const re = /\[((?:[^\[\]]|\[[^\]]*\])*)\]\((https?:\/\/[^)\s]+)\)/g;
+  const res = [], seen = new Set(); let m;
+  while ((m = re.exec(body)) && res.length < 6) {
+    let url = unwrapUrl(m[2]); let host = '';
+    try { const U = new URL(url); host = U.hostname; if (ENGINE_HOSTS.test(host) || /\.(png|jpe?g|gif|webp|ico)(\?|$)/i.test(U.pathname)) continue; } catch (e) { continue; }
+    let title = m[1].replace(/!\[[^\]]*\]\([^)]*\)/g, ' ').replace(/Image \d+:?/g, ' ');
+    if (title.includes('###')) title = title.split('###').pop();
+    title = title.replace(/https?:\/\/\S+(\s›\s\S+)*/g, ' ').replace(/\*\*/g, '').replace(/\s+/g, ' ').trim();
+    if (title.length < 12) continue;
+    const key = url.replace(/[?#].*$/, '').replace(/\/$/, '');
+    if (seen.has(key)) continue; seen.add(key);
+    const after = body.slice(re.lastIndex, re.lastIndex + 600).split(/\n\s*\n|\[!\[|\n\s*\*\s+\[|\n\d+\.\s*\[/)[0];
+    const snip = after.replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/\*\*/g, '').replace(/^\s*www\.\S+\s*$/gm, '').replace(/\s+/g, ' ').trim();
+    res.push({ title, url, snip: snip.slice(0, 300) });
+  }
+  return res;
 }
 function cleanQuery(text) {
   return text.replace(/^(hey|yo|omega|bro|please|can you|could you|search( for| up)?|look up|google)\b[, ]*/gi, '').replace(/\s+/g, ' ').trim().slice(0, 200);
@@ -160,23 +201,30 @@ async function toolWeb(text) {
       const a = d.Answer || d.AbstractText || d.Definition;
       if (a) { out.push(`Quick answer (DuckDuckGo): ${clip(a, 700)}`); if (d.AbstractURL) sources.push({ title: d.AbstractSource || 'DuckDuckGo', url: d.AbstractURL }); }
     })(),
-    (async () => { // web results via DuckDuckGo HTML
-      const html = await fetchT(PROXY + 'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(q), { type: 'text', ms: 10000 });
-      const doc = new DOMParser().parseFromString(html, 'text/html');
-      const res = [...doc.querySelectorAll('.result')].filter(r => !r.classList.contains('result--ad')).slice(0, 6).map(r => {
-        const a = r.querySelector('.result__a'); let href = a ? a.getAttribute('href') || '' : '';
-        const m = href.match(/uddg=([^&]+)/); if (m) href = decodeURIComponent(m[1]); if (href.startsWith('//')) href = 'https:' + href;
-        return { title: a ? a.textContent.trim() : '', url: href, snip: (r.querySelector('.result__snippet') || {}).textContent || '' };
-      }).filter(x => x.title);
+    (async () => { // web results: several engines read through Jina Reader, then a CORS proxy as backup
+      const enc = encodeURIComponent(q);
+      const engines = [
+        ['DuckDuckGo', 'https://r.jina.ai/https://lite.duckduckgo.com/lite/?q=' + enc],
+        ['Yahoo', 'https://r.jina.ai/https://search.yahoo.com/search?p=' + enc],
+        ['DuckDuckGo', 'https://r.jina.ai/https://html.duckduckgo.com/html/?q=' + enc],
+        ['DuckDuckGo', PROXY + 'https://lite.duckduckgo.com/lite/?q=' + enc, 'html'],
+      ];
+      let res = [], used = '';
+      // race the first two, then fall back one by one
+      const tryOne = async ([name, url, kind]) => {
+        const t = await fetchT(url, { type: 'text', ms: 14000 });
+        let r;
+        if (kind === 'html') { const doc = new DOMParser().parseFromString(t, 'text/html'); r = [...doc.querySelectorAll('a.result-link, a.result__a')].slice(0, 6).map(a => { const row = a.closest('tr'); const sn = row && row.nextElementSibling ? row.nextElementSibling.textContent : ''; return { title: a.textContent.trim(), url: unwrapUrl(a.getAttribute('href') || '').replace(/^\/\//, 'https://'), snip: sn.trim() }; }).filter(x => x.title); }
+        else r = parseSearchMarkdown(t);
+        if (r.length < 2) throw new Error(name + ' gave no results');
+        return [name, r];
+      };
+      try { [used, res] = await Promise.any(engines.slice(0, 2).map(tryOne)); }
+      catch (e) { for (const eng of engines.slice(2)) { try { [used, res] = await tryOne(eng); break; } catch (_) { } } }
       if (!res.length) throw new Error('no results');
-      out.push('Web results:\n' + res.map((x, i) => `[${i + 1}] ${x.title} — ${clip(x.snip.trim(), 300)}`).join('\n'));
+      out.push(`Web results (${used}):\n` + res.map((x, i) => `[${i + 1}] ${x.title} — ${clip(x.snip, 300)}`).join('\n'));
       res.forEach(x => { if (/^https:\/\//.test(x.url)) sources.push({ title: x.title, url: x.url }); });
-    })().catch(async () => { // fallback: Bing read through Jina Reader
-      const t = await fetchT('https://r.jina.ai/https://www.bing.com/search?q=' + encodeURIComponent(q), { type: 'text', ms: 15000 });
-      const body = t.split('Markdown Content:').pop().replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/\n{3,}/g, '\n\n');
-      out.push('Web results (Bing):\n' + clip(body, 2500));
-      sources.push({ title: 'Bing', url: 'https://www.bing.com/search?q=' + encodeURIComponent(q) });
-    }),
+    })(),
     (async () => { // Wikipedia
       const s = await fetchT(`https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(q)}&format=json&origin=*&srlimit=1`);
       const hit = s.query && s.query.search && s.query.search[0]; if (!hit) return;
@@ -209,9 +257,9 @@ function currencyPair(text) {
 }
 async function toolCurrency(text) {
   const p = currencyPair(text);
-  const d = await fetchT(`https://api.frankfurter.app/latest?amount=${p.amt}&from=${p.from}&to=${p.to}`);
+  const d = await fetchT(`https://api.frankfurter.dev/v1/latest?amount=${p.amt}&base=${p.from}&symbols=${p.to}`);
   const v = d.rates && d.rates[p.to];
-  return { label: 'Currency', text: `EXCHANGE RATE (Frankfurter / European Central Bank, ${d.date}): ${p.amt} ${p.from} = ${v} ${p.to}`, sources: [{ title: 'Frankfurter', url: 'https://www.frankfurter.app/' }] };
+  return { label: 'Currency', text: `EXCHANGE RATE (Frankfurter / European Central Bank, ${d.date}): ${p.amt} ${p.from} = ${v} ${p.to}`, sources: [{ title: 'Frankfurter', url: 'https://frankfurter.dev/' }] };
 }
 function decideTools(text) {
   const t = text.toLowerCase(), tools = [];
@@ -252,18 +300,23 @@ function loadBrain(key, onProgress) {
     const w = await getWebLLM();
     const m = modelOf(key), id = modelId(m);
     const cb = p => { onProgress && onProgress(p); const pct = Math.round((p.progress || 0) * 100); setStatus(`Loading ${m.name}… ${pct}%`); };
-    if (engine && loadedKey !== key) { try { engine.setInitProgressCallback(cb); await engine.reload(id); } catch (e) { try { await engine.unload(); } catch (_) { } engine = null; } }
-    if (!engine) {
-      try { engine = await w.CreateWebWorkerMLCEngine(new Worker(new URL('./worker.js', import.meta.url), { type: 'module' }), id, { initProgressCallback: cb }); }
-      catch (e) { if (/memory|OOM|out of/i.test(String(e && e.message))) throw e; engine = await w.CreateMLCEngine(id, { initProgressCallback: cb }); }
-    }
+    const chatOpts = { context_window_size: CTX };
+    store.set('inflight', { model: key, t: Date.now(), what: 'load' });
+    try {
+      if (engine && loadedKey !== key) { try { engine.setInitProgressCallback(cb); await engine.reload(id, chatOpts); } catch (e) { try { await engine.unload(); } catch (_) { } engine = null; } }
+      if (!engine) {
+        try { engine = await w.CreateWebWorkerMLCEngine(new Worker(new URL('./worker.js', import.meta.url), { type: 'module' }), id, { initProgressCallback: cb }, chatOpts); }
+        catch (e) { if (isGpuCrash(e)) throw e; engine = await w.CreateMLCEngine(id, { initProgressCallback: cb }, chatOpts); }
+      }
+    } finally { store.set('inflight', null); }
     loadedKey = key; settings.model = key; store.set('settings', settings);
     setStatus(''); refreshWelcome();
     return engine;
   })();
-  loading.catch(e => { setStatus(''); }).finally(() => { loading = null; });
+  loading.catch(e => { setStatus(''); engine = null; loadedKey = null; }).finally(() => { loading = null; });
   return loading;
 }
+async function dropEngine() { const e = engine; engine = null; loadedKey = null; try { e && await e.unload(); } catch (_) { } }
 const thinkStrip = t => t.replace(/<think>[\s\S]*?<\/think>\s*/g, '').replace(/<think>[\s\S]*$/, '');
 
 // ---------------- prompt ----------------
@@ -317,7 +370,7 @@ async function refreshWelcome() {
     else setup = `<div class="setup"><h2>One-time setup</h2><p>OMEGA's brain (${esc(m.name)}) downloads to this phone once, then runs offline. Use Wi-Fi: it's about 1–2 GB. Keep this page open while it downloads.</p><button class="btn pri" id="setupGo">Download OMEGA's brain</button><div class="bar" id="setupBarWrap" hidden><div class="fill" id="setupBar"></div></div><p class="hint" id="setupText" style="margin-top:8px"></p></div>`;
   }
   if (chat) return;
-  col.innerHTML = `<div class="welcome"><div class="big">Ω</div><h1>${esc(greet())}${first}</h1><p>${engine ? 'What do you want to get done?' : 'Your own AI, running on your phone.'}</p>${setup}${engine ? `<div class="sugg">${SUGG.map((s, i) => `<button data-s="${i}"><b>${esc(s[0])}</b><span>${esc(s[1])}</span></button>`).join('')}</div>` : ''}</div>`;
+  col.innerHTML = `${crashNote ? `<div class="err" style="max-width:520px;margin:8px auto">${esc(crashNote)}</div>` : ''}<div class="welcome"><div class="big">Ω</div><h1>${esc(greet())}${first}</h1><p>${engine ? 'What do you want to get done?' : 'Your own AI, running on your phone.'}</p>${setup}${engine ? `<div class="sugg">${SUGG.map((s, i) => `<button data-s="${i}"><b>${esc(s[0])}</b><span>${esc(s[1])}</span></button>`).join('')}</div>` : ''}</div>`;
   col.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { const s = SUGG[+b.dataset.s]; inp.value = s[0] + ' ' + s[1]; grow(); inp.focus(); });
   const go = $('#setupGo');
   if (go) go.onclick = () => {
@@ -327,8 +380,9 @@ async function refreshWelcome() {
   };
 }
 function showSetupError(e) {
+  if (isGpuCrash(e) && LIGHTER[settings.model]) { settings.model = LIGHTER[settings.model]; store.set('settings', settings); }
   const msg = String(e && e.message || e);
-  const tip = /memory|OOM|out of|allocation|device lost|lost/i.test(msg) ? ' Your phone ran out of memory for this brain. Open Brain and settings and pick a smaller one, like Qwen3 0.6B.' : '';
+  const tip = isGpuCrash(e) ? ` Your device ran out of memory for that brain, so OMEGA picked a lighter one (${modelOf(settings.model).name}). Reload the page and tap Download again.` : '';
   const el = document.createElement('div'); el.className = 'err'; el.textContent = 'Could not load the brain: ' + msg + tip;
   (col.querySelector('.setup') || col).appendChild(el);
 }
@@ -413,13 +467,13 @@ async function send() {
     // answer
     const codeMode = $('#codeChip').getAttribute('aria-pressed') === 'true';
     const m = modelOf(loadedKey);
-    const userContent = (live ? 'LIVE INFO (fetched just now):\n' + clip(live, 5000) + '\n\n---\n' : '') + (rem ? text + '\n(I saved this to memory. Confirm briefly.)' : text);
-    const hist = historyFor(live ? 3500 : 6000);
+    const userContent = (live ? 'LIVE INFO (fetched just now):\n' + clip(live, IS_PHONE ? 2400 : 5000) + '\n\n---\n' : '') + (rem ? text + '\n(I saved this to memory. Confirm briefly.)' : text);
+    const hist = historyFor(IS_PHONE ? (live ? 1200 : 2600) : (live ? 3500 : 6000));
     hist.pop(); // drop the current user turn (already added) — we send the enriched version
     const messages = [{ role: 'system', content: systemPrompt(codeMode) }, ...hist, { role: 'user', content: userContent }];
     const run = async msgs => {
       let out = '';
-      const stream = await engine.chat.completions.create({ messages: msgs, stream: true, temperature: codeMode ? 0.3 : 0.7, top_p: 0.9, max_tokens: codeMode ? 1500 : 800, ...(m.thinking ? { extra_body: { enable_thinking: false } } : {}) });
+      const mm = modelOf(loadedKey); const stream = await engine.chat.completions.create({ messages: msgs, stream: true, temperature: codeMode ? 0.3 : 0.7, top_p: 0.9, max_tokens: IS_PHONE ? (codeMode ? 900 : 500) : (codeMode ? 1500 : 800), ...(mm.thinking ? { extra_body: { enable_thinking: false } } : {}) });
       for await (const ch of stream) {
         out += (ch.choices && ch.choices[0] && ch.choices[0].delta && ch.choices[0].delta.content) || '';
         const shown = thinkStrip(out); if (shown) { render(ui.ans, shown); toBottom(); }
@@ -427,17 +481,29 @@ async function send() {
       }
       return thinkStrip(out).trim();
     };
+    store.set('inflight', { model: loadedKey, t: Date.now(), what: 'answer' });
     try { turn.text = await run(messages); }
     catch (e) {
-      if (/context|too long|exceed|prompt/i.test(String(e.message))) { turn.text = await run([messages[0], { role: 'user', content: clip(userContent, 3000) }]); }
+      if (isGpuCrash(e)) {
+        // the brain ran out of memory: switch to a lighter one and try once more
+        const from = loadedKey, to = LIGHTER[from];
+        await dropEngine();
+        if (!to) throw new Error("This device ran out of memory even with the lightest brain. Close other tabs and apps, then try again.");
+        ui.work.hidden = false; ui.wt.textContent = `Out of memory. Switching to ${modelOf(to).name}…`;
+        await loadBrain(to, p => { ui.wt.textContent = `Out of memory. Loading ${modelOf(to).name}… ${Math.round((p.progress || 0) * 100)}%`; });
+        const m2 = modelOf(to); messages[0].content = systemPrompt(codeMode);
+        store.set('inflight', { model: to, t: Date.now(), what: 'answer' });
+        turn.text = await run(messages.slice(0, 1).concat([{ role: 'user', content: clip(userContent, 2000) }]));
+        ui.wt.textContent = `Switched to ${m2.name} to save memory`;
+      } else if (/context|too long|exceed|prompt/i.test(String(e.message))) { turn.text = await run([messages[0], { role: 'user', content: clip(userContent, 2000) }]); }
       else throw e;
-    }
+    } finally { store.set('inflight', null); }
     if (!turn.text) turn.text = stopFlag ? '(stopped)' : "Hmm, I didn't get anything there. Try asking again?";
     render(ui.ans, turn.text);
     if (!live && !ui.wt.textContent.startsWith('Checked')) ui.work.hidden = true;
   } catch (e) {
     ui.ans.innerHTML = '';
-    const d = document.createElement('div'); d.className = 'err'; d.textContent = (e && e.message) || String(e); ui.ans.appendChild(d);
+    const d = document.createElement('div'); d.className = 'err'; d.textContent = isGpuCrash(e) ? "OMEGA's brain ran out of memory. Open Brain and settings and pick Llama 3.2 1B (Lite), then try again." : ((e && e.message) || String(e)); ui.ans.appendChild(d); if (isGpuCrash(e)) await dropEngine();
     ui.work.hidden = true;
     if (e && e.setup) { const b = document.createElement('button'); b.className = 'btn pri'; b.style.marginTop = '8px'; b.textContent = 'Open Brain and settings'; b.onclick = () => openSheet('#setSheet'); d.appendChild(document.createElement('br')); d.appendChild(b); }
     turn.text = '';

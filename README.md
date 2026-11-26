@@ -3,7 +3,7 @@
 Your own AI that runs **on your phone**, in the browser. No server, no account, no company in the middle.
 
 - **Brain:** open-source models (Qwen3, Llama 3.2, Qwen2.5 Coder) running on your device's graphics chip through [WebLLM](https://github.com/mlc-ai/web-llm). Downloads once, then works offline.
-- **Live info:** weather (Open-Meteo), news (Google News, NYT), web (DuckDuckGo, Wikipedia, Jina Reader), crypto (CoinGecko), currency (Frankfurter). All free, no keys.
+- **Live info:** weather (Open-Meteo), news (Bing News, NYT), web (DuckDuckGo via Jina Reader, Wikipedia), crypto (CoinGecko), currency (Frankfurter). All free, no keys.
 - **Memory:** profile, facts ("remember that…"), and lessons from 👎 feedback. Stored only on your device.
 - **Learning:** export liked answers and corrections as training data for fine-tuning.
 - **Code:** writes code; runs JavaScript, Python (Pyodide) and previews HTML.

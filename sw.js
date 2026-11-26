@@ -1,5 +1,5 @@
 // Offline support: keeps OMEGA's app files on the phone. The AI model itself is cached by WebLLM.
-const CACHE = 'omega-shell-v1';
+const CACHE = 'omega-shell-v2';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'worker.js', 'manifest.webmanifest', 'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k.startsWith('omega-shell-') && k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
