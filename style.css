@@ -72,6 +72,7 @@ main{display:flex;flex-direction:column;height:100%;position:relative}
 .acts{display:flex;gap:2px;align-items:center;margin-top:6px;color:var(--mute);flex-wrap:wrap}
 .acts button{min-height:34px;padding:0 10px;font-size:13px;color:var(--mute)}
 .acts button.on{color:var(--acc)}
+.live{white-space:pre-wrap;background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--acc);border-radius:12px;padding:10px 14px;font-size:14px;margin-bottom:10px;line-height:1.5}
 .err{background:var(--accsoft);border-radius:12px;padding:10px 14px;font-size:14px;margin-top:8px}
 .composer{padding:6px 14px calc(10px + env(safe-area-inset-bottom));background:linear-gradient(transparent,var(--bg) 22%)}
 .status{max-width:760px;margin:0 auto 6px;font-size:13px;color:var(--mute);text-align:center}
