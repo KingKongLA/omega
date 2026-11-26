@@ -118,3 +118,27 @@ main{display:flex;flex-direction:column;height:100%;min-height:0;min-width:0;ove
   .sugg{grid-template-columns:minmax(0,1fr)}
   .sugg button:nth-child(n+4){display:none}
 }
+/* app card: shown instead of code for games/apps */
+.appcard{display:flex;gap:14px;align-items:flex-start;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px 16px;margin:10px 0}
+.appicon{flex:none;width:48px;height:48px;border-radius:12px;background:var(--hover);display:grid;place-items:center;font-size:26px}
+.appinfo{flex:1;min-width:0}
+.appinfo b{display:block;font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.appinfo .sub{font-size:13px;opacity:.7;margin-top:2px}
+.appbtns{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.appbtns button,.appbtns .btn{font:inherit;font-size:14px;padding:8px 14px;border-radius:99px;border:1px solid var(--line);background:transparent;color:var(--ink);text-decoration:none;cursor:pointer;min-height:38px;display:inline-flex;align-items:center}
+.appbtns .primary{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
+.appcard .bar{margin-top:10px}
+.fill.indet{width:35%;animation:indet 1.3s ease-in-out infinite}
+@keyframes indet{0%{transform:translateX(-100%)}100%{transform:translateX(290%)}}
+.spinner{width:22px;height:22px;border-radius:50%;border:3px solid var(--line);border-top-color:var(--acc);animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.dots::after{content:'';display:inline-block;width:1.2em;text-align:left;animation:dots 1.2s steps(4,end) infinite}
+@keyframes dots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}
+.thinking{opacity:.7;font-style:italic;padding:4px 0;animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.35}}
+/* full-screen player */
+.player{position:fixed;inset:0;z-index:50;background:#000;display:flex;flex-direction:column}
+.pbar{display:flex;align-items:center;gap:8px;padding:calc(8px + env(safe-area-inset-top)) 10px 8px;background:#111;color:#fff}
+.pbar button{font:inherit;font-size:14px;color:#fff;background:#2a2a2a;border:0;border-radius:99px;padding:8px 14px;min-height:38px}
+.ptitle{flex:1;text-align:center;font-weight:600;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.player iframe{flex:1;width:100%;border:0;background:#fff;padding-bottom:env(safe-area-inset-bottom)}

@@ -7,7 +7,7 @@ const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.89';
 const WLLAMA_URL = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/index.js';
 const WLLAMA_WASM = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/wasm/wllama.wasm';
 const PROXY = 'https://proxy.cors.dev/';
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 
 const MODELS = [
   { key: 'cpu-qwen3-0.6b', engine: 'cpu', name: 'Qwen3 0.6B', repo: 'unsloth/Qwen3-0.6B-GGUF', file: 'Qwen3-0.6B-Q4_K_M.gguf', sizeMB: 400, memMB: 650, thinking: true, desc: 'Recommended for iPhone. Runs on the processor, so it does not crash.' },
@@ -75,9 +75,14 @@ function mdBlock(t) {
   }
   flushP(); flushL(); return h;
 }
-function render(el, text) {
+const isWebLang = (lang, code) => /^(html|htm)$/.test(lang) || (!lang && /^\s*<(!doctype|html)/i.test(code));
+function appKind(code, text) { return /\b(game|flappy|snake|tetris|pong|score|jump|player|enemy)\b/i.test(code + ' ' + text) ? 'game' : 'app'; }
+function appTitle(code, kind) { const m = code.match(/<title>([^<]{1,60})<\/title>/i) || code.match(/<h1[^>]*>([^<]{1,60})<\/h1>/i); return m ? m[1].trim() : (kind === 'game' ? 'Your game' : 'Your app'); }
+function render(el, text, live) {
   if (!el.id) el.id = 'x' + (++seq);
-  const parts = String(text || '').split(/```([\w+#.-]*)[^\n]*\n?([\s\S]*?)(?:```|$)/);
+  text = String(text || '');
+  const parts = text.split(/```([\w+#.-]*)[^\n]*\n?([\s\S]*?)(?:```|$)/);
+  const openFence = live && ((text.match(/```/g) || []).length % 2 === 1); // a code block is still being written
   let h = '', k = 0;
   for (let i = 0; i < parts.length; i += 3) {
     h += mdBlock(parts[i] || '');
@@ -85,18 +90,58 @@ function render(el, text) {
       const lang = (parts[i + 1] || '').toLowerCase(), code = parts[i + 2] || '', id = el.id + '-' + (k++);
       codes[id] = { lang, code };
       const run = /^(js|javascript)$/.test(lang) ? 'Run' : /^(html|htm|svg)$/.test(lang) ? 'Preview' : /^(py|python)$/.test(lang) ? 'Run' : '';
-      h += `<div class="code"><div class="cbar"><span>${esc(lang || 'code')}</span><button data-copy="${id}">Copy</button>${run ? `<button data-run="${id}">${run}</button>` : ''}</div><pre><code>${esc(code)}</code></pre><div class="runout" id="r-${id}"></div></div>`;
+      const codeBox = (hidden) => `<div class="code"${hidden ? ` hidden id="c-${id}"` : ''}><div class="cbar"><span>${esc(lang || 'code')}</span><button data-copy="${id}">Copy</button>${run && !hidden ? `<button data-run="${id}">${run}</button>` : ''}</div><pre><code>${esc(code)}</code></pre><div class="runout" id="r-${id}"></div></div>`;
+      if (isWebLang(lang, code)) {
+        const kind = appKind(code, text), building = openFence && i + 3 >= parts.length - 1;
+        if (building) {
+          const lines = code.split('\n').length;
+          h += `<div class="appcard building"><div class="appicon"><span class="spinner"></span></div><div class="appinfo"><b>Building your ${kind}<span class="dots"></span></b><div class="sub">${lines < 3 ? 'Planning it out' : `Writing the code · ${lines} lines so far`}</div><div class="bar"><div class="fill indet"></div></div></div></div>`;
+        } else {
+          h += `<div class="appcard"><div class="appicon">${kind === 'game' ? '🎮' : '✨'}</div><div class="appinfo"><b>${esc(appTitle(code, kind))}</b><div class="sub">Ready to ${kind === 'game' ? 'play' : 'use'} · made by OMEGA</div><div class="appbtns"><button class="primary" data-play="${id}">▶ ${kind === 'game' ? 'Play' : 'Open'}</button><a class="btn" data-linkfor="${id}" target="_blank" rel="noopener">🔗 Link</a><button data-showcode="${id}">Code</button></div></div></div>` + codeBox(true);
+          makeLink(code).then(u => { const a = document.querySelector(`[data-linkfor="${id}"]`); if (a) a.href = u; }).catch(() => { });
+        }
+        continue;
+      }
+      h += codeBox(false);
     }
   }
+  if (live && !h.trim()) h = '<div class="thinking">Thinking<span class="dots"></span></div>';
   el.innerHTML = h;
 }
+// a real link to the app: the code is packed (compressed) into the address of play.html
+const linkCache = new Map();
+async function makeLink(code) {
+  if (linkCache.has(code)) return linkCache.get(code);
+  const b64u = bytes => { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
+  const raw = new TextEncoder().encode(code);
+  let hash;
+  try { const z = new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer()); hash = 'z' + b64u(z); }
+  catch (e) { hash = 'r' + b64u(raw); }
+  const u = new URL('play.html', location.href).href + '#' + hash;
+  linkCache.set(code, u); return u;
+}
+function openPlayer(code) {
+  closePlayer();
+  const kind = appKind(code, '');
+  const p = document.createElement('div'); p.className = 'player'; p.id = 'player';
+  p.innerHTML = `<div class="pbar"><button class="pclose" aria-label="Close">✕ Close</button><span class="ptitle">${esc(appTitle(code, kind))}</span><button class="pcopy">🔗 Copy link</button></div>`;
+  const f = document.createElement('iframe'); f.setAttribute('sandbox', 'allow-scripts allow-forms allow-modals allow-pointer-lock'); f.setAttribute('allow', 'autoplay; fullscreen'); f.srcdoc = code; p.appendChild(f);
+  document.body.appendChild(p);
+  p.querySelector('.pclose').onclick = closePlayer;
+  p.querySelector('.pcopy').onclick = async e => { const b = e.currentTarget, u = await makeLink(code); if (navigator.share) { navigator.share({ title: appTitle(code, kind), url: u }).catch(() => { }); } else copyText(u, b); };
+  setTimeout(() => { try { f.focus(); } catch (e) { } }, 300);
+}
+function closePlayer() { const p = document.getElementById('player'); if (p) p.remove(); }
 function copyText(text, b) {
   const done = ok => { if (!b) return; const o = b.textContent; b.textContent = ok ? 'Copied' : 'Copy failed'; setTimeout(() => { b.textContent = o; }, 1400); };
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => done(true), () => done(false));
   else { const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t); t.select(); let ok = false; try { ok = document.execCommand('copy'); } catch (e) { } t.remove(); done(ok); }
 }
 document.addEventListener('click', e => {
-  const b = e.target.closest && e.target.closest('[data-copy],[data-run]'); if (!b) return;
+  const b = e.target.closest && e.target.closest('[data-copy],[data-run],[data-play],[data-showcode],[data-linkfor]'); if (!b) return;
+  if (b.dataset.play && codes[b.dataset.play]) { openPlayer(codes[b.dataset.play].code); return; }
+  if (b.dataset.showcode) { const c = document.getElementById('c-' + b.dataset.showcode); if (c) { c.hidden = !c.hidden; b.textContent = c.hidden ? 'Code' : 'Hide code'; } return; }
+  if (b.dataset.linkfor) { if (!b.getAttribute('href')) { e.preventDefault(); const c = codes[b.dataset.linkfor]; if (c) makeLink(c.code).then(u => { b.href = u; location.href = u; }); } return; }
   if (b.dataset.copy && codes[b.dataset.copy]) copyText(codes[b.dataset.copy].code, b);
   if (b.dataset.run && codes[b.dataset.run]) runCode(codes[b.dataset.run], document.getElementById('r-' + b.dataset.run));
 });
@@ -374,7 +419,7 @@ async function startCpuBrain(m, cb) {
     async chat(messages, o) {
       abort = new AbortController(); let out = '';
       try {
-        const it = await w.createChatCompletion({ messages, stream: true, max_tokens: o.maxTokens, temperature: o.temperature, abortSignal: abort.signal, ...(m.thinking ? { chat_template_kwargs: { enable_thinking: false } } : {}) });
+        const it = await w.createChatCompletion({ messages, stream: true, max_tokens: o.maxTokens, temperature: o.temperature, top_p: 0.9, repeat_penalty: 1.12, repeat_last_n: 128, abortSignal: abort.signal, ...(m.thinking ? { chat_template_kwargs: { enable_thinking: false } } : {}) });
         for await (const c of it) { out += (c.choices && c.choices[0] && c.choices[0].delta && c.choices[0].delta.content) || ''; o.onText(out); }
       } catch (e) { if (!(abort.signal.aborted || /abort/i.test(String(e && (e.name || e.message))))) throw e; }
       return out;
@@ -444,7 +489,7 @@ function systemPrompt(codeMode, hasLive) {
     f ? `Things to remember about ${name}:\n${f}` : '',
     l ? `Feedback ${name} gave you before (follow it):\n${l}` : '',
     hasLive ? 'The message includes LIVE INFO fetched from the internet just now: answer from it, copy numbers, times and names exactly as written, and name the source.' : 'If you do not know something, say so instead of making it up.',
-    codeMode ? 'CODING MODE: write complete, working code in fenced code blocks with a language tag (```html, ```javascript, ```python). For apps, prefer one self-contained HTML file. JavaScript runs in a worker (use console.log). Explain briefly how to use it.' : '',
+    codeMode ? 'CODING MODE: write complete, working code in fenced code blocks with a language tag (```html, ```javascript, ```python). For a game, app, website or anything visual: reply with ONE short sentence, then ONE complete self-contained ```html file (all CSS and JavaScript inside it, no outside files or images). It is played on a phone: fill the screen, and make taps/touches work (touchstart) as well as clicks and keys. Keep it simple so it is finished and works. Do not explain the code after it. For plain scripts, JavaScript runs in a worker (use console.log).' : '',
   ].filter(Boolean).join('\n\n');
 }
 function historyFor(maxChars) {
@@ -550,6 +595,18 @@ async function send() {
     // memory command
     const rem = text.match(/^(?:please\s+)?(?:remember|don'?t forget)(?:\s+that)?[:,]?\s+(.{3,})$/i);
     if (rem) { const f = rem[1].replace(/[.!]+$/, ''); facts.push(f); facts = facts.slice(-100); store.set('facts', facts); renderFacts(); }
+    // well-known games: use OMEGA's tested game library (the phone brain is too small to write a whole game reliably)
+    if (!rem && /\b(make|build|create|code|write|give|want|play|let'?s|can you|game)\b/i.test(text)) {
+      let game = null; try { game = (await import('./games.js?v=' + VERSION)).findGame(text); } catch (e) { }
+      if (game) {
+        const code = game.make(), intro = `Here's your ${game.name} game ${game.emoji} It's from OMEGA's built-in game library, made for your phone.`;
+        const lines = code.split('\n'), steps = 34;
+        for (let i = 1; i <= steps && !stopFlag; i++) { render(ui.ans, intro + '\n\n```html\n' + lines.slice(0, Math.ceil(lines.length * i / steps)).join('\n'), true); toBottom(); await new Promise(r => setTimeout(r, 120)); }
+        turn.text = intro + '\n\n```html\n' + code + '\n```';
+        render(ui.ans, turn.text); toBottom();
+        return;
+      }
+    }
     // live info first, so OMEGA can still help even if the brain can't start
     let live = '', liveShown = '';
     if (settings.live && !rem) {
@@ -588,7 +645,8 @@ async function send() {
     const hist = historyFor(IS_PHONE ? (live ? 1200 : 2600) : (live ? 3500 : 6000));
     hist.pop(); // drop the current user turn (already added) — we send the enriched version
     const messages = [{ role: 'system', content: systemPrompt(codeMode, !!live) }, ...hist, { role: 'user', content: userContent }];
-    const opts = { temperature: codeMode ? 0.3 : 0.7, maxTokens: IS_PHONE ? (codeMode ? 900 : 500) : (codeMode ? 1500 : 800), onText: out => { const shown = thinkStrip(out); if (shown) { render(ui.ans, shown); toBottom(); } } };
+    const opts = { temperature: codeMode ? 0.3 : 0.7, maxTokens: IS_PHONE ? (codeMode ? 1400 : 500) : (codeMode ? 2000 : 800), onText: out => { render(ui.ans, thinkStrip(out), true); toBottom(); } };
+    render(ui.ans, '', true); toBottom(); // shows "Thinking…" until the first words arrive
     const run = async msgs => thinkStrip(await engine.chat(msgs, opts)).trim();
     store.set('inflight', { model: loadedKey, t: Date.now(), what: 'answer' });
     try { turn.text = await run(messages); }
