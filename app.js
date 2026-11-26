@@ -7,10 +7,10 @@ const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.89';
 const WLLAMA_URL = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/index.js';
 const WLLAMA_WASM = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/wasm/wllama.wasm';
 const PROXY = 'https://proxy.cors.dev/';
-const VERSION = '2.2.0';
+const VERSION = '2.3.0';
 
 const MODELS = [
-  { key: 'cpu-qwen3-0.6b', engine: 'cpu', name: 'Qwen3 0.6B', repo: 'unsloth/Qwen3-0.6B-GGUF', file: 'Qwen3-0.6B-Q4_K_M.gguf', sizeMB: 400, memMB: 650, thinking: true, desc: 'Recommended for iPhone. Runs on the processor, so it does not crash.' },
+  { key: 'cpu-qwen3-0.6b', engine: 'cpu', name: 'Qwen3 0.6B', repo: 'unsloth/Qwen3-0.6B-GGUF', file: 'Qwen3-0.6B-Q4_K_M.gguf', sizeMB: 400, memMB: 650, thinking: true, desc: 'Recommended for phones and tablets. Runs on the processor, so it does not crash.' },
   { key: 'cpu-llama-1b', engine: 'cpu', name: 'Llama 3.2 1B', repo: 'unsloth/Llama-3.2-1B-Instruct-GGUF', file: 'Llama-3.2-1B-Instruct-Q4_K_M.gguf', sizeMB: 810, memMB: 1050, desc: 'Smarter, more natural chat. A little slower.' },
   { key: 'cpu-qwen2.5-0.5b', engine: 'cpu', name: 'Qwen2.5 0.5B', repo: 'Qwen/Qwen2.5-0.5B-Instruct-GGUF', file: 'qwen2.5-0.5b-instruct-q4_k_m.gguf', sizeMB: 490, memMB: 700, desc: 'Backup brain.' },
   { key: 'gpu-qwen3-1.7b', engine: 'gpu', name: 'Qwen3 1.7B (fast mode)', f16: 'Qwen3-1.7B-q4f16_1-MLC', f32: 'Qwen3-1.7B-q4f32_1-MLC', sizeMB: 1100, memMB: 2040, thinking: true, desc: 'Uses the graphics chip. Fast and smart on computers.' },
@@ -20,6 +20,8 @@ const MODELS = [
 ];
 const IS_IOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
 const IS_PHONE = IS_IOS || /Android/i.test(navigator.userAgent);
+const IS_IPAD = /iPad/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
+const DEVICE = IS_IPAD ? 'iPad' : IS_IOS ? 'iPhone' : IS_PHONE ? 'phone' : 'device';
 const STANDALONE = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
 const CTX = IS_PHONE ? 2048 : 4096; // smaller working memory on phones = far less RAM
 const PHONE_DEFAULT = 'cpu-qwen3-0.6b';
@@ -220,9 +222,11 @@ async function fetchOnce(url, { ms = 9000, type = 'json' } = {}) {
   } finally { clearTimeout(t); }
 }
 const WMO = { 0: 'clear sky', 1: 'mostly clear', 2: 'partly cloudy', 3: 'overcast', 45: 'fog', 48: 'freezing fog', 51: 'light drizzle', 53: 'drizzle', 55: 'heavy drizzle', 61: 'light rain', 63: 'rain', 65: 'heavy rain', 66: 'freezing rain', 67: 'heavy freezing rain', 71: 'light snow', 73: 'snow', 75: 'heavy snow', 80: 'rain showers', 81: 'rain showers', 82: 'violent rain showers', 95: 'thunderstorm', 96: 'thunderstorm with hail', 99: 'thunderstorm with hail' };
-const NOT_PLACE = /^(today|tonight|tomorrow|now|right now|this|next|the|my|a|an|it|work|school|home|night|morning|evening|afternoon|weekend|week)\b/i;
+const NOT_PLACE = /^(today|tonight|tomorrow|now|right now|this|next|the|my|a|an|it|me|here|there|work|school|home|night|morning|evening|afternoon|weekend|week|all|least|most|first|last|once|times?)\b/i;
+const FILLER = /\s+\b(like|tho|though|bro|rn|please|pls|at all|outside|area|today|tonight|tomorrow|this weekend|this week)\b.*$/i;
 function placeFrom(text) {
-  const p = rawPlace(text);
+  const p = rawPlace(text).replace(FILLER, '').trim();
+  if (p && PLACE_ALIASES[p.toLowerCase()]) return p;
   return !p || NOT_PLACE.test(p) ? (profile.city || 'Los Angeles') : p;
 }
 function rawPlace(text) {
@@ -233,25 +237,50 @@ const PLACE_ALIASES = { la: 'Los Angeles', 'l.a.': 'Los Angeles', nyc: 'New York
 async function geocode(place) {
   const raw = place.trim().replace(/[.!?]+$/, ''); const key = raw.toLowerCase();
   const name = PLACE_ALIASES[key] || raw.split(',')[0];
-  const g = await fetchT(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=8&language=en&format=json`);
-  const rs = (g && g.results) || [];
+  // try the full name, then drop extra words from the end ("san diego california" -> "san diego")
+  let rs = [], words = name.trim().split(/\s+/);
+  for (let n = words.length; n >= 1 && !rs.length && n > words.length - 3; n--) {
+    const g = await fetchT(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(words.slice(0, n).join(' '))}&count=8&language=en&format=json`);
+    rs = (g && g.results) || [];
+  }
   if (!rs.length) throw new Error('Place not found: ' + raw);
   const wantState = (raw.split(',')[1] || '').trim().toLowerCase();
   // prefer: matching state/country if given, then the biggest city (US cities get a 5x boost)
   const score = r => (wantState && ((r.admin1 || '').toLowerCase().startsWith(wantState) || (r.country_code || '').toLowerCase() === wantState) ? 1e12 : 0) + (r.population || 1000) * (r.country_code === 'US' ? 5 : 1);
   return rs.slice().sort((a, b) => score(b) - score(a))[0];
 }
+async function weatherData(p) {
+  try {
+    const w = await fetchT(`https://api.open-meteo.com/v1/forecast?latitude=${p.latitude}&longitude=${p.longitude}&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch&timezone=auto&forecast_days=7`);
+    const c = w.current, d = w.daily;
+    return { src: 'Open-Meteo', url: 'https://open-meteo.com/', now: { t: c.temperature_2m, feels: c.apparent_temperature, desc: WMO[c.weather_code] || 'mixed', wind: c.wind_speed_10m },
+      days: d.time.map((date, i) => ({ date, desc: WMO[d.weather_code[i]] || 'mixed', hi: d.temperature_2m_max[i], lo: d.temperature_2m_min[i], rain: d.precipitation_probability_max[i] ?? 0 })) };
+  } catch (e) {
+    // backup source (3 days) when Open-Meteo is busy
+    const w = await fetchT(`https://wttr.in/${p.latitude.toFixed(3)},${p.longitude.toFixed(3)}?format=j1`, { ms: 12000 });
+    const c = w.current_condition[0];
+    return { src: 'wttr.in', url: 'https://wttr.in/', now: { t: +c.temp_F, feels: +c.FeelsLikeF, desc: (c.weatherDesc[0].value || 'mixed').toLowerCase().trim(), wind: +c.windspeedMiles },
+      days: w.weather.map(x => ({ date: x.date, desc: ((x.hourly[4] || x.hourly[0]).weatherDesc[0].value || 'mixed').toLowerCase().trim(), hi: +x.maxtempF, lo: +x.mintempF, rain: Math.max(...x.hourly.map(h => +h.chanceofrain || 0)) })) };
+  }
+}
 async function toolWeather(text) {
   const p = await geocode(placeFrom(text));
-  const w = await fetchT(`https://api.open-meteo.com/v1/forecast?latitude=${p.latitude}&longitude=${p.longitude}&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,precipitation&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch&timezone=auto&forecast_days=3`);
-  const c = w.current, d = w.daily, where = [p.name, p.admin1, p.country_code].filter(Boolean).join(', ');
-  const lt = text.toLowerCase();
-  const want = /week|weekend|days|next few|forecast/.test(lt) ? [0, 1, 2] : /tomorrow/.test(lt) ? [1] : [0];
-  const dayName = i => i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : new Date(d.time[i] + 'T12:00').toLocaleDateString('en-US', { weekday: 'long' });
-  const dayLine = i => `${dayName(i)}: ${WMO[d.weather_code[i]] || 'mixed'}, high ${Math.round(d.temperature_2m_max[i])}°F, low ${Math.round(d.temperature_2m_min[i])}°F, ${d.precipitation_probability_max[i] ?? 0}% chance of rain`;
-  const nowLine = `Right now: ${Math.round(c.temperature_2m)}°F (feels like ${Math.round(c.apparent_temperature)}°F), ${WMO[c.weather_code] || 'mixed'}, wind ${Math.round(c.wind_speed_10m)} mph`;
-  const lines = [nowLine, ...want.map(dayLine)];
-  return { label: 'Weather', text: `WEATHER in ${where} (Open-Meteo, live). Use these exact numbers:\n` + lines.join('\n'), plain: `🌤 ${where}\n` + lines.join('\n'), sources: [{ title: 'Open-Meteo', url: 'https://open-meteo.com/' }] };
+  const w = await weatherData(p), where = [p.name, p.admin1, p.country_code].filter(Boolean).join(', ');
+  const lt = text.toLowerCase(), D = w.days, idx = D.map((_, i) => i);
+  const dow = i => new Date(D[i].date + 'T12:00').getDay(); // 0 = Sunday, 6 = Saturday
+  const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const named = DAYS.map((n, k) => new RegExp('\\b' + n).test(lt) ? k : -1).filter(k => k >= 0);
+  let want = /weekend/.test(lt) ? idx.filter(i => dow(i) === 0 || dow(i) === 6)
+    : named.length ? idx.filter(i => named.includes(dow(i)))
+    : /week|days|next few|forecast/.test(lt) ? idx
+    : /tomorrow/.test(lt) ? [1] : [0];
+  let note = '';
+  if (!want.length) { want = [0]; if (/weekend/.test(lt) || named.length) note = `(The forecast from ${w.src} only goes ${D.length} days ahead, so that day isn't available yet.)`; }
+  const dayName = i => i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : new Date(D[i].date + 'T12:00').toLocaleDateString('en-US', { weekday: 'long' });
+  const dayLine = i => `${dayName(i)}: ${D[i].desc}, high ${Math.round(D[i].hi)}°F, low ${Math.round(D[i].lo)}°F, ${D[i].rain}% chance of rain`;
+  const nowLine = `Right now: ${Math.round(w.now.t)}°F (feels like ${Math.round(w.now.feels)}°F), ${w.now.desc}, wind ${Math.round(w.now.wind)} mph`;
+  const lines = [nowLine, ...want.map(dayLine), note].filter(Boolean);
+  return { label: 'Weather', text: `WEATHER in ${where} (${w.src}, live). Use these exact numbers:\n` + lines.join('\n'), plain: `🌤 ${where}\n` + lines.join('\n'), sources: [{ title: w.src, url: w.url }] };
 }
 function parseRSS(xml, n) {
   const doc = new DOMParser().parseFromString(xml, 'text/xml');
@@ -260,9 +289,11 @@ function parseRSS(xml, n) {
     return { title: g('title').trim(), link: g('link').trim(), date: g('pubDate').trim(), source: g('source').trim() };
   }).filter(x => x.title);
 }
+// "Wed, 25 Nov 2026 05:01:00 GMT" -> "Nov 25" (no clock time, so the brain can't mistake it for an event time)
+function shortDate(d) { const t = new Date(d); return isNaN(t) ? '' : t.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }
 function bingLink(l) { const m = l.match(/[?&]url=([^&]+)/); return m ? decodeURIComponent(m[1]) : l; }
 async function toolNews(text) {
-  const q = text.replace(/\b(news|latest|headlines?|what'?s|whats|happening|give me|show me|tell me|the|a|an|about|on|any|today|tonight|yesterday|last night|right now|update|updates|in the|who|what|when|where|did|does|do|is|was|were|are|won|win|score|of|for|please|bro|hey|yo|omega)\b/gi, ' ').replace(/[?!.,]/g, ' ').replace(/\s+/g, ' ').trim();
+  const q = text.replace(/\b(news|latest|headlines?|what'?s|whats|happening|give me|show me|tell me|the|a|an|about|on|any|today|tonight|yesterday|last night|right now|update|updates|in the|who|what|when|where|did|does|do|is|was|were|are|won|win|score|of|for|with|going on|please|bro|hey|yo|omega|time|start|starts|what time|tonight'?s|how|go|going|went)\b/gi, ' ').replace(/[?!.,]/g, ' ').replace(/\s+/g, ' ').trim();
   let items = [];
   if (q.length > 2) {
     try { items = parseRSS(await fetchT(PROXY + 'https://www.bing.com/news/search?q=' + encodeURIComponent(q) + '&format=rss', { type: 'text', ms: 12000 }), 8).map(x => ({ ...x, link: bingLink(x.link) })); } catch (e) { }
@@ -274,7 +305,7 @@ async function toolNews(text) {
   if (!items.length) throw new Error('No news sources answered');
   const srcName = x => x.source || (() => { try { return new URL(x.link).hostname.replace(/^www\./, ''); } catch (e) { return ''; } })();
   const plain = '📰 ' + (q.length > 2 ? 'News about ' + q : 'Top headlines') + ':\n' + items.slice(0, 5).map(x => '• ' + x.title + (srcName(x) && !x.title.includes(srcName(x)) ? ' — ' + srcName(x) : '')).join('\n');
-  return { label: 'News', plain, text: `NEWS${q.length > 2 ? ' about "' + q + '"' : ' (top headlines)'} (live):\n` + items.map((x, i) => `${i + 1}. ${x.title}${srcName(x) && !x.title.includes(srcName(x)) ? ' — ' + srcName(x) : ''}${x.date ? ' (' + x.date.replace(/ [+-]\d{4}$| GMT$/, '') + ')' : ''}`).join('\n'), sources: items.filter(x => /^https:\/\//.test(x.link)).slice(0, 5).map(x => ({ title: srcName(x) || x.title, url: x.link })) };
+  return { label: 'News', plain, text: `NEWS${q.length > 2 ? ' about "' + q + '"' : ' (top headlines)'} (live):\n` + items.map((x, i) => `${i + 1}. ${x.title}${srcName(x) && !x.title.includes(srcName(x)) ? ' — ' + srcName(x) : ''}${x.date ? ' (published ' + shortDate(x.date) + ')' : ''}`).join('\n'), sources: items.filter(x => /^https:\/\//.test(x.link)).slice(0, 5).map(x => ({ title: srcName(x) || x.title, url: x.link })) };
 }
 // Pull clean results out of a search page that Jina Reader turned into markdown (works for DuckDuckGo, Yahoo and others).
 const ENGINE_HOSTS = /(^|\.)(duckduckgo\.com|yahoo\.com|yimg\.com|bing\.com|google\.com|jina\.ai|startpage\.com|brave\.com|msn\.com\/search)$/i;
@@ -403,20 +434,27 @@ async function toolTime(text) {
     const local = now.toLocaleString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
     return { label: 'Time', text: `TIME (this device's clock): ${local}`, plain: `🕒 It's ${local}.`, answer: `It's ${local}.`, sources: [] };
   }
-  const place = m[0].replace(/^\s*(in|at|for)\s+/i, '').replace(/\s*\b(right now|now|today|currently)\b.*$/i, '').replace(/[?!.]+$/, '').trim();
-  if (!place || NOT_PLACE.test(place)) return toolTime('what time is it');
+  const place = m[0].replace(/^\s*(in|at|for)\s+/i, '').replace(/\s*\b(right now|now|today|currently)\b.*$/i, '').replace(/[?!.]+$/, '').replace(FILLER, '').trim();
+  if (!place || (NOT_PLACE.test(place) && !PLACE_ALIASES[place.toLowerCase()])) return toolTime('what time is it');
   const p = await geocode(place);
   if (!p.timezone) throw new Error('No time zone for ' + p.name);
   const t = now.toLocaleString('en-US', { timeZone: p.timezone, weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
   const where = [p.name, p.admin1, p.country_code].filter(Boolean).join(', ');
   return { label: 'Time', text: `TIME in ${where} right now (time zone ${p.timezone}): ${t}`, plain: `🕒 In ${where} it's ${t}.`, answer: `In ${where}, it's ${t}.`, sources: [] };
 }
+// only real "what's the time/date" questions — not "what time does the game start" or "what day does GTA 6 come out"
+function isClockQuestion(t) {
+  t = t.replace(/[?!.]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (/\b(what time|what day|which day|what date)\s+(does|do|did|is the|are|will|should|can|was|were|starts?|opens?|closes?)\b/.test(t) && !/\b(what time is it|what day is it|what day is today)\b/.test(t)) return false;
+  return /\b(what time is it|what'?s the time|whats the time|what is the time|what time it is|time is it|current time|time right now|what'?s the time now|what day is it|what day is today|what'?s today'?s date|what is today'?s date|what'?s the date|whats the date|what is the date|today'?s date|date today|what date is it|what'?s today|what is today|what year is it|what month is it)\b/.test(t)
+    || /^(what time|time|clock|current time|local time|what'?s the time) (in|at) [a-z]/.test(t) || /^(what time|the time|time)$/.test(t);
+}
 function decideTools(text) {
   const t = text.toLowerCase(), tools = [];
-  const url = (text.match(/https?:\/\/[^\s)]+/) || [])[0];
+  const url = ((text.match(/https?:\/\/[^\s)<>"']+/) || [])[0] || '').replace(/[.,!?;:]+$/, '');
   if (url) tools.push(['read', () => toolRead(url)]);
-  if (/\b(what time|time is it|what'?s the time|what is the time|current time|time right now|time now|what day|which day|what'?s the date|what is the date|today'?s date|date today|what date|what year is it|day is it)\b/.test(t) || /^(the )?(time|clock) (in|at) /.test(t)) tools.push(['time', () => toolTime(text)]);
-  if (/\b(weather|temperature|forecast|raining|rain today|rain tomorrow|snow|humid|how hot|how cold|degrees outside|sunny)\b/.test(t)) tools.push(['weather', () => toolWeather(text)]);
+  if (isClockQuestion(t)) tools.push(['time', () => toolTime(text)]);
+  if (/\b(weather|temperature|forecast|rain(ing|y)?|snow(ing|y)?|humid|humidity|how hot|how cold|degrees outside|sunny|cloudy|windy|thunderstorms?|umbrella|jacket)\b/.test(t) && !/\b(song|album|lyrics|movie|film|band|rapper|track)\b/.test(t)) tools.push(['weather', () => toolWeather(text)]);
   if (/\b(bitcoin|btc|ethereum|eth|crypto|solana|dogecoin|doge|xrp|cardano|litecoin|shiba|pepe)\b/.test(t) && /\b(price|worth|cost|how much|value|at|today|now|up|down)\b/.test(t)) tools.push(['crypto', () => toolCrypto(text)]);
   if (currencyPair(text)) tools.push(['currency', () => toolCurrency(text)]);
   if (/\b(news|headlines?|what'?s happening|what happened)\b/.test(t)) tools.push(['news', () => toolNews(text)]);
@@ -424,11 +462,15 @@ function decideTools(text) {
   const build = /\b(make|build|write|create|code|program|generate|design|draw|develop)\b/.test(t) && !/\b(search|look up|google|news|latest|price)\b/.test(t);
   if (!tools.length && !url && !build) {
     const words = t.split(/\s+/).filter(Boolean).length;
-    const live = /\b(today|tonight|yesterday|tomorrow|this (week|weekend|month|year)|right now|currently|current|latest|recent|newest|new|upcoming|202[4-9]|price|prices|cost|how much|who won|score|scores|game|release date|released|open now|hours|near me|stock|search|look up|google|who is|who's|what is|what's|when is|when does|when did|where is|is .+ still|did .+ (die|win|lose)|ceo of|president|election|update)\b/.test(t);
+    const live = /\b(today|tonight|yesterday|tomorrow|this (week|weekend|month|year)|right now|currently|current|latest|recent|newest|new|upcoming|202[4-9]|price|prices|cost|how much|who won|score|scores|how did|game (last night|tonight|today|yesterday)|release date|released|open now|hours|near me|stock|search|look up|google|out yet|is .+ out|when do|when are|when'?s|next game|play next|plays next|playing next|schedule|tonight'?s game|come out|comes out|coming out|release|drops?|launch(es|ing)?|premieres?|what day|what time|who is|who's|what is|what's|when is|when does|when did|where is|is .+ still|did .+ (die|win|lose)|ceo of|president|election|update)\b/.test(t);
     const casual = /^(hi|hey|yo|sup|wassup|thanks|thank you|ok|okay|lol|lmao|bet|cool|nice|good (morning|night|afternoon))\b/.test(t) && words <= 5;
-    const sports = /\b(won|win|score|scores|beat|lost|game|match|fight|final)\b/.test(t);
+    const sports = /\b(won|win|score|scores|beat|lost|game|games|match|fight|final|play|plays|playing|schedule)\b/.test(t) && !/\b(video ?games?|ps5|xbox|switch|steam|gta|coming out|come out|release|released)\b/.test(t);
     // sports: latest news only (web results often show older games); web search only if no news is found
-    if (live && !casual && words >= 2) tools.push(sports ? ['news', () => toolNews(text).catch(() => toolWeb(text))] : ['web', () => toolWeb(text)]);
+    const schedule = sports && /\b(what time|when|start|starts|kick ?off|tip ?off|tonight|schedule|next|channel|watch)\b/.test(t);
+    if (live && !casual && words >= 2) {
+      if (schedule) { tools.push(['news', () => toolNews(text)]); tools.push(['web', () => toolWeb(text)]); } // game times are often only on the web
+      else tools.push(sports ? ['news', () => toolNews(text).catch(() => toolWeb(text))] : ['web', () => toolWeb(text)]);
+    }
   }
   return tools;
 }
@@ -457,14 +499,14 @@ async function isCached(m) {
 function setStatus(t) { const s = $('#brainStatus'); s.textContent = t || ''; s.hidden = !t; }
 
 // Each engine is wrapped in the same small interface: chat(), stop(), unload()
-async function startCpuBrain(m, cb) {
+async function startCpuBrain(m, cb, saved) {
   if (!wasmCheck()) throw new Error('This browser cannot run WebAssembly.');
   const { Wllama } = await getWllama();
   const w = new Wllama({ default: WLLAMA_WASM }, { suppressNativeLog: true, allowOffline: true });
   // load straight from the file address (skips Hugging Face's file-list lookup, so a saved brain opens with no internet)
   await w.loadModelFromUrl({ url: `https://huggingface.co/${m.repo}/resolve/main/${m.file}` }, {
     n_ctx: CTX, n_gpu_layers: 0, n_batch: 512,
-    progressCallback: ({ loaded, total }) => cb({ progress: total ? loaded / total : 0, text: total ? `Downloading ${Math.round(loaded / 1e6)} of ${Math.round(total / 1e6)} MB` : 'Downloading…' }),
+    progressCallback: ({ loaded, total }) => cb({ progress: total ? loaded / total : 0, text: saved ? `Loading from this ${DEVICE}… ${total ? Math.round(loaded / total * 100) : 0}%` : total ? `Downloading ${Math.round(loaded / 1e6)} of ${Math.round(total / 1e6)} MB` : 'Downloading…' }),
   });
   cb({ progress: 1, text: 'Starting up…' });
   let abort = null;
@@ -510,11 +552,11 @@ function loadBrain(key, onProgress) {
     while (true) {
       const m = modelOf(key);
       if (downloading === null) downloading = !(await isCached(m).catch(() => false)); // the user already agreed to a download
-      const cb = p => { onProgress && onProgress(p, m); setStatus(`Loading ${m.name}… ${Math.round((p.progress || 0) * 100)}%`); };
+      const cb = p => { onProgress && onProgress(p, m); setStatus(p.progress >= 1 ? `Starting ${m.name}…` : `Loading ${m.name}… ${Math.round((p.progress || 0) * 100)}%`); };
       setInflight({ model: key, t: Date.now(), what: 'load' });
       try {
         if (engine) { await engine.unload(); engine = null; loadedKey = null; }
-        engine = m.engine === 'cpu' ? await startCpuBrain(m, cb) : await startGpuBrain(m, cb);
+        engine = m.engine === 'cpu' ? await startCpuBrain(m, cb, !downloading || tries > 0 && await isCached(m).catch(() => false)) : await startGpuBrain(m, cb);
         loadedKey = key; settings.model = key; store.set('settings', settings); setInflight(null);
         try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) { }
         setStatus(''); refreshWelcome();
@@ -541,7 +583,7 @@ function systemPrompt(codeMode, hasLive) {
   const f = facts.slice(-30).map(x => '- ' + x).join('\n');
   const l = lessons.slice(-6).map(x => `- When asked "${clip(x.q, 120)}", ${name} said: ${clip(x.fix, 300)}`).join('\n');
   return [
-    `You are OMEGA, ${name}'s personal AI assistant. You are an AI, not a person: never invent a personal life, feelings, plans or stories about yourself. Your job is to help ${name}. Talk in a casual, warm, direct way, like a helpful friend texting back. Reply to exactly what ${name} said. Short answers for simple stuff, more detail when it's needed.`,
+    `You are OMEGA, ${name}'s personal AI assistant. You are an AI, not a person, so don't pretend to have a body, a personal life or human experiences. Happily help with anything ${name} asks: questions, advice, stories, jokes, scripts, captions, plans and code. Talk in a casual, warm, direct way, like a helpful friend texting back. Reply to exactly what ${name} said. Short answers for simple stuff, more detail when it's needed.`,
     profile.style ? `How ${name} wants you to talk: ${profile.style}` : '',
     profile.about ? `About ${name}: ${profile.about}` : '',
     f ? `Things to remember about ${name}:\n${f}` : '',
@@ -554,7 +596,7 @@ function historyFor(maxChars) {
   const turns = (chat && chat.turns) || [];
   const out = []; let used = 0;
   for (let i = turns.length - 1; i >= 0; i--) {
-    const t = turns[i]; const c = clip(t.text, 2500); used += c.length;
+    const t = turns[i]; const c = clip(String(t.text || '').replace(/```[\s\S]*?(```|$)/g, '[code]'), 2500); used += c.length;
     if (used > maxChars) break;
     out.unshift({ role: t.role === 'user' ? 'user' : 'assistant', content: c });
   }
@@ -564,7 +606,7 @@ function historyFor(maxChars) {
 // iPhone keyboard: Safari doesn't shrink the page when the keyboard opens, so size the app to the visible area
 if (window.visualViewport) {
   const vv = window.visualViewport;
-  const fitVV = () => { document.documentElement.style.setProperty('--vh', Math.round(vv.height) + 'px'); if (vv.offsetTop > 0 || scrollY > 0) scrollTo(0, 0); };
+  const fitVV = () => { if (vv.scale > 1.01) return; /* pinch-zoomed: leave the layout alone */ document.documentElement.style.setProperty('--vh', Math.round(vv.height) + 'px'); if (vv.offsetTop > 0 || scrollY > 0) scrollTo(0, 0); };
   vv.addEventListener('resize', fitVV); vv.addEventListener('scroll', fitVV); fitVV();
 }
 // ---------------- UI: chat ----------------
@@ -587,13 +629,13 @@ async function refreshWelcome() {
     const m = modelOf(settings.model);
     const cached = await isCached(m);
     const lighter = (() => { let k = LIGHTER[m.key]; while (k && !fitsDevice(modelOf(k))) k = LIGHTER[k]; return k ? modelOf(k) : null; })();
-    if (crashBlocked && !loading) setup = `<div class="setup"><h2>OMEGA's brain crashed twice</h2><p>Your phone ran out of memory while ${esc(m.name)} was running. Close other apps and tabs, then try again${lighter ? `, or switch to ${esc(lighter.name)} (smaller, about ${lighter.sizeMB} MB download)` : ''}.</p><button class="btn pri" id="crashRetry">Try again</button>${lighter ? ` <button class="btn" id="crashLighter">Use ${esc(lighter.name)}</button>` : ''}<div class="bar" id="setupBarWrap" hidden><div class="fill" id="setupBar"></div></div><p class="hint" id="setupText" style="margin-top:8px"></p></div>`;
+    if (crashBlocked && !loading) setup = `<div class="setup"><h2>OMEGA's brain crashed twice</h2><p>Your ${DEVICE} ran out of memory while ${esc(m.name)} was running. Close other apps and tabs, then try again${lighter ? `, or switch to ${esc(lighter.name)} (smaller, about ${lighter.sizeMB} MB download)` : ''}.</p><button class="btn pri" id="crashRetry">Try again</button>${lighter ? ` <button class="btn" id="crashLighter">Use ${esc(lighter.name)}</button>` : ''}<div class="bar" id="setupBarWrap" hidden><div class="fill" id="setupBar"></div></div><p class="hint" id="setupText" style="margin-top:8px"></p></div>`;
     else if (!wasmCheck()) setup = `<div class="setup"><h2>This browser can't run OMEGA's brain</h2><p>Use Safari on iPhone or Chrome on a computer. Live info still works: ask about weather, news or the time.</p></div>`;
     else if (cached || loading) { setup = `<div class="setup"><h2>Waking up OMEGA…</h2><p>Loading ${esc(m.name)} from this device. This takes a few seconds.</p><div class="bar" id="setupBarWrap"><div class="fill" id="setupBar"></div></div><p class="hint" id="setupText" style="margin-top:8px"></p></div>`; if (!loading) loadBrain(m.key, setupProgress).catch(e => showSetupError(e)); }
     else setup = `<div class="setup"><h2>One-time setup</h2><p>OMEGA's brain (${esc(m.name)}) downloads to this device once, then runs offline. It's about ${m.sizeMB} MB, so use Wi-Fi and keep this page open while it downloads.</p><button class="btn pri" id="setupGo">Download OMEGA's brain</button><div class="bar" id="setupBarWrap" hidden><div class="fill" id="setupBar"></div></div><p class="hint" id="setupText" style="margin-top:8px"></p></div>`;
   }
   if (chat) return;
-  col.innerHTML = `${crashNote ? `<div class="err" style="max-width:520px;margin:8px auto">${esc(crashNote)}</div>` : ''}<div class="welcome"><div class="big">Ω</div><h1>${esc(greet())}${first}</h1><p>${engine ? 'What do you want to get done?' : 'Your own AI, running on your phone.'}</p>${engine ? `<p class="hint" style="margin:-10px 0 14px">✓ ${esc(modelOf(loadedKey).name)} is saved on this ${IS_PHONE ? 'phone' : 'device'}, so it opens instantly next time, even offline.</p>` : ''}${engine && IS_IOS && !STANDALONE ? `<div class="setup" style="margin-bottom:14px"><p style="margin:0"><b>Tip:</b> tap Share → <b>Add to Home Screen</b>. Safari can clear saved website data after 7 days without a visit, but not for Home Screen apps. (The Home Screen app downloads the brain once more the first time you open it.)</p></div>` : ''}${setup}${engine ? `<div class="sugg">${SUGG.map((s, i) => `<button data-s="${i}"><b>${esc(s[0])}</b><span>${esc(s[1])}</span></button>`).join('')}</div>` : ''}</div>`;
+  col.innerHTML = `${crashNote ? `<div class="err" style="max-width:520px;margin:8px auto">${esc(crashNote)}</div>` : ''}<div class="welcome"><div class="big">Ω</div><h1>${esc(greet())}${first}</h1><p>${engine ? 'What do you want to get done?' : `Your own AI, running on your ${DEVICE}.`}</p>${engine ? `<p class="hint" style="margin:-10px 0 14px">✓ ${esc(modelOf(loadedKey).name)} is saved on this ${DEVICE}, so it opens instantly next time, even offline.</p>` : ''}${engine && IS_IOS && !STANDALONE ? `<div class="setup" style="margin-bottom:14px"><p style="margin:0"><b>Tip:</b> tap Share → <b>Add to Home Screen</b>. Safari can clear saved website data after 7 days without a visit, but not for Home Screen apps. (The Home Screen app downloads the brain once more the first time you open it.)</p></div>` : ''}${setup}${engine ? `<div class="sugg">${SUGG.map((s, i) => `<button data-s="${i}"><b>${esc(s[0])}</b><span>${esc(s[1])}</span></button>`).join('')}</div>` : ''}</div>`;
   col.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { const s = SUGG[+b.dataset.s]; inp.value = s[0] + ' ' + s[1]; grow(); inp.focus(); });
   const cr = $('#crashRetry'), cl = $('#crashLighter');
   if (cr) cr.onclick = () => { crashBlocked = false; store.set('crashes', null); refreshWelcome(); };
@@ -606,10 +648,13 @@ async function refreshWelcome() {
 }
 function setupProgress(p) { const b = $('#setupBar'), t = $('#setupText'), w = $('#setupBarWrap'); if (w) w.hidden = false; if (b) b.style.width = Math.round((p.progress || 0) * 100) + '%'; if (t) t.textContent = p.text || ''; }
 function showSetupError(e) {
-  if (isGpuCrash(e) && LIGHTER[settings.model]) { settings.model = LIGHTER[settings.model]; store.set('settings', settings); }
-  const msg = String(e && e.message || e);
-  const tip = isGpuCrash(e) ? ` Your device ran out of memory for that brain, so OMEGA picked a lighter one (${modelOf(settings.model).name}). Reload the page and tap Download again.` : '';
-  const el = document.createElement('div'); el.className = 'err'; el.textContent = 'Could not load the brain: ' + msg + tip;
+  const msg = String(e && e.message || e), mem = isGpuCrash(e);
+  const off = navigator.onLine === false || /fetch|network|load failed/i.test(msg);
+  const el = document.createElement('div'); el.className = 'err';
+  el.textContent = 'Could not load the brain: ' + (off ? 'no internet connection. Connect to Wi-Fi and try again.' : msg + (mem ? ' Your device ran low on memory. Close other apps and tabs, then try again.' : ''));
+  const b = document.createElement('button'); b.className = 'btn'; b.style.marginTop = '8px'; b.textContent = 'Try again';
+  b.onclick = () => { el.remove(); const go = $('#setupGo'); if (go) go.disabled = false; refreshWelcome(); };
+  el.appendChild(document.createElement('br')); el.appendChild(b);
   (col.querySelector('.setup') || col).appendChild(el);
 }
 function addUser(text) {
@@ -666,8 +711,16 @@ async function send() {
     const rem = text.match(/^(?:please\s+)?(?:remember|don'?t forget)(?:\s+that)?[:,]?\s+(.{3,})$/i);
     if (rem) { const f = rem[1].replace(/[.!]+$/, ''); facts.push(f); facts = facts.slice(-100); store.set('facts', facts); renderFacts(); }
     // well-known games: use OMEGA's tested game library (the phone brain is too small to write a whole game reliably)
-    if (!rem && /\b(make|build|create|code|write|give|want|play|let'?s|can you|game)\b/i.test(text)) {
+    if (rem) { turn.text = `Got it, I'll remember that: ${rem[1].replace(/[.!]+$/, '')}`; render(ui.ans, turn.text); return; } // saved; no brain needed
+    if (/\b(make|build|create|code|write|give|gimme|want|play|game)\b/i.test(text)) {
       let game = null; try { game = (await import('./games.js?v=' + VERSION)).findGame(text); } catch (e) { }
+      // "snake" alone could be the animal: only when it's clearly about a game
+      if (game && game.key === 'snake' && !/\b(game|play)\b/i.test(text) && !/^(?:yo |hey |bro |omega )?(?:can you |could you |please )?(?:make|build|code|create|give)(?: me)?(?: a| the)? snake\b/i.test(text)) game = null;
+      if (game && !/\b(make|build|create|code|write|give|gimme|play|game)\b/i.test(text)) game = null;
+      if (!game && /\b(play|games?)\b/i.test(text) && /\b(want|wanna|let'?s|can i|could i|i'?m bored|bored|any|got|have)\b/i.test(text) && !/\b(won|win|score|tonight|lakers|rams|dodgers|nba|nfl|mlb|xbox|ps5|switch|steam)\b/i.test(text)) {
+        turn.text = "I've got 5 games ready to play right here: **Flappy Bird** 🐤, **Snake** 🐍, **Pong** 🏓, **Breakout** 🧱 and **Tic-Tac-Toe** ❌. Just say which one, like \"play snake\".";
+        render(ui.ans, turn.text); return;
+      }
       if (game) {
         const code = game.make(), intro = `Here's your ${game.name} game ${game.emoji} It's from OMEGA's built-in game library, made for your phone.`;
         const lines = code.split('\n'), steps = 34;
@@ -717,7 +770,8 @@ async function send() {
     if (stopFlag) { turn.text = '(stopped)'; render(ui.ans, turn.text); return; }
     // answer
     const codeMode = $('#codeChip').getAttribute('aria-pressed') === 'true';
-    const userContent = (live ? 'LIVE INFO (fetched just now):\n' + clip(live, IS_PHONE ? 2400 : 5000) + '\n\n(Answer using the LIVE INFO above. It is real and current. If it lists headlines or results, summarize the most relevant ones, and prefer the newest dated item.)\n---\n' : '') + (rem ? text + '\n(I saved this to memory. Confirm briefly.)' : text);
+    const wantsApp = codeMode && /\b(app|calculator|website|web ?site|page|landing|game|tool|timer|stopwatch|to-?do|todo|tracker|form|quiz|clock|counter|converter|ui|dashboard|portfolio|menu|button)\b/i.test(text) && !/\b(python|script|terminal|command line|node|java|c\+\+|swift|sql)\b/i.test(text);
+    const userContent = (live ? 'LIVE INFO (fetched just now):\n' + clip(live, IS_PHONE ? 2400 : 5000) + '\n\n(Answer using the LIVE INFO above. It is real and current. If it lists headlines or results, summarize the most relevant ones, and prefer the newest dated item. If the LIVE INFO does not contain the exact answer (for example a time, score or date), say you could not find that exact detail and share what you did find. Never guess numbers, times or scores.)\n---\n' : '') + text + (wantsApp ? '\n\n(Make it as ONE complete, working ```html file with the CSS and JavaScript inside. No input() prompts. It must work on a phone screen.)' : '');
     const hist = codeMode && IS_PHONE ? [] : historyFor(IS_PHONE ? (live ? 1200 : 2600) : (live ? 3500 : 6000));
     if (hist.length) hist.pop(); // drop the current user turn (already added) — we send the enriched version
     const messages = [{ role: 'system', content: systemPrompt(codeMode, !!live) }, ...hist, { role: 'user', content: userContent }];
@@ -793,7 +847,7 @@ sideVeil.onclick = closeSide;
 function openSheet(id) { closeSide(); veil.hidden = false; $(id).hidden = false; if (id === '#setSheet') renderSettings(); }
 function closeSheets() { veil.hidden = true; ['#setSheet', '#memSheet', '#fbSheet'].forEach(s => $(s).hidden = true); }
 veil.onclick = closeSheets; document.querySelectorAll('[data-close]').forEach(b => b.onclick = closeSheets);
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeSheets(); closeSide(); } });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closePlayer(); closeSheets(); closeSide(); } });
 $('#openMem').onclick = () => openSheet('#memSheet'); $('#openSet').onclick = () => openSheet('#setSheet');
 
 // chips
@@ -807,7 +861,7 @@ async function renderSettings() {
   $('#gpuInfo').textContent = engine ? `Running ${modelOf(loadedKey).name} on this device's ${engine.kind === 'cpu' ? 'processor' : 'graphics chip'}.` : (wasmCheck() ? 'Pick a brain and load it. It downloads once.' : "This browser can't run OMEGA's brain.");
   if (!fitsDevice(modelOf(pick))) pick = settings.model;
   const rows = await Promise.all(MODELS.map(async m => ({ m, cached: fitsDevice(m) && await isCached(m) })));
-  $('#models').innerHTML = rows.map(({ m, cached }) => { const ok = fitsDevice(m); return `<label class="model ${pick === m.key ? 'on' : ''}" ${ok ? '' : 'style="opacity:.5"'}><input type="radio" name="model" value="${m.key}" ${pick === m.key ? 'checked' : ''} ${ok ? '' : 'disabled'}><div><b>${esc(m.name)}${loadedKey === m.key ? ' · running' : cached ? ' · downloaded' : ''}</b><span>${esc(m.desc)} About ${m.sizeMB} MB.${ok ? '' : ' Not available on iPhone (Safari would crash).'}</span></div></label>`; }).join('');
+  $('#models').innerHTML = rows.map(({ m, cached }) => { const ok = fitsDevice(m); return `<label class="model ${pick === m.key ? 'on' : ''}" ${ok ? '' : 'style="opacity:.5"'}><input type="radio" name="model" value="${m.key}" ${pick === m.key ? 'checked' : ''} ${ok ? '' : 'disabled'}><div><b>${esc(m.name)}${loadedKey === m.key ? ' · running' : cached ? ' · downloaded' : ''}</b><span>${esc(m.desc)} About ${m.sizeMB} MB.${ok ? '' : ` Not available on ${DEVICE} (Safari would crash).`}</span></div></label>`; }).join('');
   $('#models').querySelectorAll('input').forEach(i => i.onchange = () => { pick = i.value; renderSettings(); });
   $('#loadBtn').disabled = loadedKey === pick || !!loading || busy;
   $('#loadHint').textContent = loadedKey === pick ? 'Already running.' : '';
@@ -874,7 +928,7 @@ if (SR) {
     rec.onresult = ev => { inp.value = base + [...ev.results].map(r => r[0].transcript).join(''); grow(); };
     rec.onend = () => { rec = null; mic.style.color = ''; };
     rec.onerror = () => { rec = null; mic.style.color = ''; };
-    mic.style.color = 'var(--acc)'; rec.start();
+    mic.style.color = 'var(--acc)'; try { rec.start(); } catch (e) { rec = null; mic.style.color = ''; }
   };
 }
 
@@ -883,4 +937,4 @@ fillProfile(); renderFacts(); renderChats(); syncChips(); grow(); refreshWelcome
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => { });
 // keep the downloaded brain from being cleared by the browser when storage is low
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => { });
-window.OMEGA = { decideTools, currencyPair, placeFrom, version: VERSION };
+window.OMEGA = { decideTools, currencyPair, placeFrom, isClockQuestion, toolWeather, toolTime, toolNews, toolCrypto, toolCurrency, version: VERSION };
