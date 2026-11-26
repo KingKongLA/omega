@@ -808,7 +808,15 @@ async function send() {
     ui.ans.innerHTML = '';
     const d = document.createElement('div'); d.className = 'err'; d.textContent = isGpuCrash(e) ? "OMEGA's brain crashed. Open Brain and settings and pick Qwen3 0.6B, then try again." : ((e && e.message) || String(e)); ui.ans.appendChild(d); if (isGpuCrash(e)) await dropEngine();
     ui.work.hidden = true;
-    if (e && e.setup) { const b = document.createElement('button'); b.className = 'btn pri'; b.style.marginTop = '8px'; b.textContent = 'Open Brain and settings'; b.onclick = () => openSheet('#setSheet'); d.appendChild(document.createElement('br')); d.appendChild(b); }
+    if (e && e.setup) {
+      const b = document.createElement('button'); b.className = 'btn pri'; b.style.marginTop = '8px'; d.appendChild(document.createElement('br')); d.appendChild(b);
+      const p = document.createElement('div'); p.className = 'hint'; p.style.marginTop = '6px'; d.appendChild(p);
+      if (crashBlocked) { b.textContent = 'Go to the home screen'; b.onclick = () => newChat(); }
+      else {
+        const m = modelOf(settings.model); b.textContent = `Download OMEGA's brain (${m.sizeMB} MB)`;
+        b.onclick = () => { b.disabled = true; loadBrain(m.key, x => { p.textContent = x.text || Math.round((x.progress || 0) * 100) + '%'; }).then(() => { p.textContent = 'Ready! Ask me again.'; b.remove(); }).catch(err => { p.textContent = 'Could not download: ' + err.message; b.disabled = false; }); };
+      }
+    }
     turn.text = '';
   } finally {
     if (turn.text) { chat.turns.push(turn); showSources(ui, turn.sources); showActs(ui, turn, text); }
