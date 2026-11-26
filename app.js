@@ -20,6 +20,7 @@ const MODELS = [
 ];
 const IS_IOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
 const IS_PHONE = IS_IOS || /Android/i.test(navigator.userAgent);
+const STANDALONE = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
 const CTX = IS_PHONE ? 2048 : 4096; // smaller working memory on phones = far less RAM
 const PHONE_DEFAULT = 'cpu-qwen3-0.6b';
 const DESKTOP_DEFAULT = 'gpu-qwen3-1.7b';
@@ -348,7 +349,7 @@ async function getWllama() { if (!wllamaMod) wllamaMod = await import(WLLAMA_URL
 function modelId(m) { return hasF16 === false ? m.f32 : m.f16; }
 async function isCached(m) {
   try {
-    if (m.engine === 'cpu') { const { Wllama } = await getWllama(); const w = new Wllama({ default: WLLAMA_WASM }, { suppressNativeLog: true }); const list = await w.cacheManager.list(); return list.some(e => (e.metadata && e.metadata.originalURL || e.name || '').includes(m.file)); }
+    if (m.engine === 'cpu') { const { Wllama } = await getWllama(); const w = new Wllama({ default: WLLAMA_WASM }, { suppressNativeLog: true, allowOffline: true }); const list = await w.cacheManager.list(); return list.some(e => (e.metadata && e.metadata.originalURL || e.name || '').includes(m.file)); }
     const g = await gpuCheck(); if (!g.ok) return false; const w = await getWebLLM(); return await w.hasModelInCache(modelId(m));
   } catch (e) { return false; }
 }
@@ -358,8 +359,9 @@ function setStatus(t) { const s = $('#brainStatus'); s.textContent = t || ''; s.
 async function startCpuBrain(m, cb) {
   if (!wasmCheck()) throw new Error('This browser cannot run WebAssembly.');
   const { Wllama } = await getWllama();
-  const w = new Wllama({ default: WLLAMA_WASM }, { suppressNativeLog: true });
-  await w.loadModelFromHF({ repo: m.repo, file: m.file }, {
+  const w = new Wllama({ default: WLLAMA_WASM }, { suppressNativeLog: true, allowOffline: true });
+  // load straight from the file address (skips Hugging Face's file-list lookup, so a saved brain opens with no internet)
+  await w.loadModelFromUrl({ url: `https://huggingface.co/${m.repo}/resolve/main/${m.file}` }, {
     n_ctx: CTX, n_gpu_layers: 0, n_batch: 512,
     progressCallback: ({ loaded, total }) => cb({ progress: total ? loaded / total : 0, text: total ? `Downloading ${Math.round(loaded / 1e6)} of ${Math.round(total / 1e6)} MB` : 'Downloading…' }),
   });
@@ -410,6 +412,7 @@ function loadBrain(key, onProgress) {
         if (engine) { await engine.unload(); engine = null; loadedKey = null; }
         engine = m.engine === 'cpu' ? await startCpuBrain(m, cb) : await startGpuBrain(m, cb);
         loadedKey = key; settings.model = key; store.set('settings', settings); store.set('inflight', null);
+        try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) { }
         setStatus(''); refreshWelcome();
         return engine;
       } catch (err) {
@@ -476,7 +479,7 @@ async function refreshWelcome() {
     else setup = `<div class="setup"><h2>One-time setup</h2><p>OMEGA's brain (${esc(m.name)}) downloads to this device once, then runs offline. It's about ${m.sizeMB} MB, so use Wi-Fi and keep this page open while it downloads.</p><button class="btn pri" id="setupGo">Download OMEGA's brain</button><div class="bar" id="setupBarWrap" hidden><div class="fill" id="setupBar"></div></div><p class="hint" id="setupText" style="margin-top:8px"></p></div>`;
   }
   if (chat) return;
-  col.innerHTML = `${crashNote ? `<div class="err" style="max-width:520px;margin:8px auto">${esc(crashNote)}</div>` : ''}<div class="welcome"><div class="big">Ω</div><h1>${esc(greet())}${first}</h1><p>${engine ? 'What do you want to get done?' : 'Your own AI, running on your phone.'}</p>${setup}${engine ? `<div class="sugg">${SUGG.map((s, i) => `<button data-s="${i}"><b>${esc(s[0])}</b><span>${esc(s[1])}</span></button>`).join('')}</div>` : ''}</div>`;
+  col.innerHTML = `${crashNote ? `<div class="err" style="max-width:520px;margin:8px auto">${esc(crashNote)}</div>` : ''}<div class="welcome"><div class="big">Ω</div><h1>${esc(greet())}${first}</h1><p>${engine ? 'What do you want to get done?' : 'Your own AI, running on your phone.'}</p>${engine ? `<p class="hint" style="margin:-10px 0 14px">✓ ${esc(modelOf(loadedKey).name)} is saved on this ${IS_PHONE ? 'phone' : 'device'}, so it opens instantly next time, even offline.</p>` : ''}${engine && IS_IOS && !STANDALONE ? `<div class="setup" style="margin-bottom:14px"><p style="margin:0"><b>Tip:</b> tap Share → <b>Add to Home Screen</b>. Safari can clear saved website data after 7 days without a visit, but not for Home Screen apps. (The Home Screen app downloads the brain once more the first time you open it.)</p></div>` : ''}${setup}${engine ? `<div class="sugg">${SUGG.map((s, i) => `<button data-s="${i}"><b>${esc(s[0])}</b><span>${esc(s[1])}</span></button>`).join('')}</div>` : ''}</div>`;
   col.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { const s = SUGG[+b.dataset.s]; inp.value = s[0] + ' ' + s[1]; grow(); inp.focus(); });
   const go = $('#setupGo');
   if (go) go.onclick = () => {
@@ -548,7 +551,7 @@ async function send() {
     // live info first, so OMEGA can still help even if the brain can't start
     let live = '', liveShown = '';
     if (settings.live && !rem) {
-      const tools = decideTools(text);
+      const tools = navigator.onLine === false ? [] : decideTools(text); // no internet: skip live info, just answer
       if (tools.length) {
         ui.work.hidden = false; ui.wt.textContent = 'Checking live info: ' + tools.map(t => t[0]).join(', ') + '…';
         const res = await Promise.allSettled(tools.map(t => t[1]()));
@@ -682,7 +685,7 @@ $('#testSrc').onclick = async () => {
 $('#clearChats').onclick = () => { if ($('#clearChats').dataset.sure) { chats = []; store.set('chats', chats); newChat(); $('#dataHint').textContent = 'All chats deleted.'; delete $('#clearChats').dataset.sure; $('#clearChats').textContent = 'Delete all chats'; } else { $('#clearChats').dataset.sure = '1'; $('#clearChats').textContent = 'Tap again to delete all chats'; } };
 $('#clearCache').onclick = async () => {
   let n = 0;
-  try { const { Wllama } = await getWllama(); const w = new Wllama({ default: WLLAMA_WASM }, { suppressNativeLog: true }); const keep = loadedKey && modelOf(loadedKey).engine === 'cpu' ? modelOf(loadedKey).file : '\u0000'; await w.cacheManager.deleteMany(e => { const hit = !(e.metadata && e.metadata.originalURL || e.name || '').includes(keep); if (hit) n++; return hit; }); } catch (e) { }
+  try { const { Wllama } = await getWllama(); const w = new Wllama({ default: WLLAMA_WASM }, { suppressNativeLog: true, allowOffline: true }); const keep = loadedKey && modelOf(loadedKey).engine === 'cpu' ? modelOf(loadedKey).file : '\u0000'; await w.cacheManager.deleteMany(e => { const hit = !(e.metadata && e.metadata.originalURL || e.name || '').includes(keep); if (hit) n++; return hit; }); } catch (e) { }
   try { if ('gpu' in navigator) { const w = await getWebLLM(); for (const m of MODELS.filter(m => m.engine === 'gpu' && m.key !== loadedKey)) for (const id of [m.f16, m.f32]) { try { await w.deleteModelAllInfoInCache(id); } catch (e) { } } } } catch (e) { }
   $('#dataHint').textContent = 'Removed downloaded brains that are not running right now.'; renderSettings();
 };
@@ -732,7 +735,7 @@ if (SR) {
 
 // ---------------- boot ----------------
 fillProfile(); renderFacts(); renderChats(); syncChips(); grow(); refreshWelcome();
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => { });
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => { });
 // keep the downloaded brain from being cleared by the browser when storage is low
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => { });
 window.OMEGA = { decideTools, currencyPair, placeFrom, version: VERSION };
