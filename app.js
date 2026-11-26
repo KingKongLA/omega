@@ -449,6 +449,17 @@ function isClockQuestion(t) {
   return /\b(what time is it|what'?s the time|whats the time|what is the time|what time it is|time is it|current time|time right now|what'?s the time now|what day is it|what day is today|what'?s today'?s date|what is today'?s date|what'?s the date|whats the date|what is the date|today'?s date|date today|what date is it|what'?s today|what is today|what year is it|what month is it)\b/.test(t)
     || /^(what time|time|clock|current time|local time|what'?s the time) (in|at) [a-z]/.test(t) || /^(what time|the time|time)$/.test(t);
 }
+// exact math for simple calculations ("what's 15% of 240", "347 times 29", "(12+8)/4")
+function quickMath(text) {
+  let t = text.toLowerCase().replace(/,(?=\d{3})/g, '').replace(/[?!=]+/g, ' ').trim();
+  t = t.replace(/^(yo|hey|bro|omega|ok|okay)[, ]+/g, '').replace(/^(what'?s|whats|what is|how much is|calculate|calc|compute|solve)\s+/, '').replace(/\s+(equal|equals|be)$/, '');
+  const pct = t.match(/^(\d+(?:\.\d+)?)\s*(?:%|percent)\s+of\s+(\d+(?:\.\d+)?)$/);
+  if (pct) { const v = +pct[1] / 100 * +pct[2]; return `${pct[1]}% of ${pct[2]} is ${fmtNum(v)}.`; }
+  const e = t.replace(/\b(times|multiplied by|x)\b|×/g, '*').replace(/\b(divided by|over)\b|÷/g, '/').replace(/\bplus\b/g, '+').replace(/\bminus\b/g, '-').replace(/\bsquared\b/g, '**2').replace(/\bcubed\b/g, '**3').replace(/\^/g, '**').replace(/\s+/g, '');
+  if (!/^[\d.+\-*/()]+$/.test(e) || !/\d[+\-*/]+[\d(]|\*\*\d/.test(e) || e.length > 60) return null;
+  try { const v = Function('"use strict";return (' + e + ')')(); if (typeof v !== 'number' || !isFinite(v)) return null; return `${e.replace(/\*\*/g, '^').replace(/\*/g, ' × ').replace(/\//g, ' ÷ ').replace(/\+/g, ' + ').replace(/(\d)-/g, '$1 - ')} = ${fmtNum(v)}`; } catch (_) { return null; }
+}
+const fmtNum = v => Math.abs(v) >= 1e15 ? v.toExponential(4) : (+v.toFixed(6)).toLocaleString('en-US', { maximumFractionDigits: 6 });
 function decideTools(text) {
   const t = text.toLowerCase(), tools = [];
   const url = ((text.match(/https?:\/\/[^\s)<>"']+/) || [])[0] || '').replace(/[.,!?;:]+$/, '');
@@ -730,6 +741,8 @@ async function send() {
         return;
       }
     }
+    const math = quickMath(text);
+    if (math) { turn.text = math; render(ui.ans, turn.text); return; } // exact, instant, no brain needed
     // live info first, so OMEGA can still help even if the brain can't start
     let live = '', liveShown = '';
     if (settings.live && !rem) {
@@ -940,9 +953,11 @@ if (SR) {
   };
 }
 
+// pressing Stop cancels the brain mid-sentence; that cancel isn't an error
+addEventListener('unhandledrejection', e => { if (/abort/i.test(String(e.reason && (e.reason.name || e.reason.message) || e.reason))) e.preventDefault(); });
 // ---------------- boot ----------------
 fillProfile(); renderFacts(); renderChats(); syncChips(); grow(); refreshWelcome();
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => { });
 // keep the downloaded brain from being cleared by the browser when storage is low
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => { });
-window.OMEGA = { decideTools, currencyPair, placeFrom, isClockQuestion, toolWeather, toolTime, toolNews, toolCrypto, toolCurrency, version: VERSION };
+window.OMEGA = { quickMath, decideTools, currencyPair, placeFrom, isClockQuestion, toolWeather, toolTime, toolNews, toolCrypto, toolCurrency, version: VERSION };
