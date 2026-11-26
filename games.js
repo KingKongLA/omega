@@ -109,6 +109,8 @@ function draw(){x.fillStyle='#111';x.fillRect(0,0,W,H);x.strokeStyle='#333';x.se
 const breakout = () => shell('Breakout', '#0f1420', '', `
 let pad,ball,bricks,score,lives,st='ready',tx=null,hi=best.get('breakout');const COLS=8,ROWS=6,COLORS=['#ff595e','#ff924c','#ffca3a','#8ac926','#1982c4','#6a4c93'];
 function build(){bricks=[];const bw=(W-20)/COLS;for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++)bricks.push({x:10+c*bw+2,y:90+r*26,w:bw-4,h:20,col:COLORS[r],on:1})}
+function relayout(){if(!bricks)return;const bw=(W-20)/COLS;bricks.forEach((b,i)=>{b.x=10+(i%COLS)*bw+2;b.w=bw-4})}
+addEventListener('resize',()=>{relayout();if(pad){pad.w=Math.min(110,W*0.26);pad.x=Math.min(pad.x,W-pad.w/2)}});
 function newBall(){ball={x:pad.x,y:H-90,vx:3*(Math.random()<.5?-1:1),vy:-5.5,r:8,stuck:1}}
 function reset(){pad={x:W/2,w:Math.min(110,W*0.26)};score=0;lives=3;build();newBall()}
 reset();

@@ -1,10 +1,12 @@
 // Offline support: keeps OMEGA's app files and the brain engine (wllama) on the device.
 // The brain itself is saved by wllama in the browser's private file storage.
-const CACHE = 'omega-shell-v17';
+const CACHE = 'omega-shell-v18';
 const ENGINE = 'omega-engine-v1';
-const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'worker.js', 'play.html', 'games.js', 'manifest.webmanifest', 'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
-self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
+const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'games.js', 'play.html', 'worker.js', 'manifest.webmanifest', 'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
+// 'reload' skips the browser's 10-minute cache, so the saved copy is always the newest version
+self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => (k.startsWith('omega-shell-') && k !== CACHE) || (k.startsWith('omega-engine-') && k !== ENGINE)).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
+const fromCache = req => caches.match(req).then(r => r || caches.match(req, { ignoreSearch: true }));
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   const u = new URL(e.request.url);
@@ -14,6 +16,15 @@ self.addEventListener('fetch', e => {
     return;
   }
   if (u.origin !== location.origin) return; // never touch model downloads or live-info calls
-  // app files: try the network first (to get updates), fall back to the saved copy when offline
-  e.respondWith(fetch(e.request, { cache: 'no-cache' }).then(r => { const copy = r.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); return r; }).catch(() => caches.match(e.request, { ignoreSearch: true }).then(r => r || caches.match('index.html'))));
+  // app files: newest from the network; if offline or the network is too slow (4 s), the saved copy
+  e.respondWith((async () => {
+    const net = fetch(e.request, { cache: 'no-cache' }).then(r => { if (r.ok) { const copy = r.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); } return r; });
+    try {
+      const r = await Promise.race([net, new Promise(res => setTimeout(res, 4000, 'slow'))]);
+      if (r !== 'slow') return r;
+      return (await fromCache(e.request)) || await net; // slow network: use the saved copy if there is one
+    } catch (err) {
+      return (await fromCache(e.request)) || (await caches.match('index.html')) || Response.error(); // offline
+    }
+  })());
 });
