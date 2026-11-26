@@ -50,8 +50,32 @@ let settings = store.get('settings', { model: IS_PHONE ? PHONE_DEFAULT : DESKTOP
 if (!MODELS.some(m => m.key === settings.model)) settings.model = IS_PHONE ? PHONE_DEFAULT : DESKTOP_DEFAULT; // upgrade from older versions
 if (!fitsDevice(MODELS.find(m => m.key === settings.model))) settings.model = PHONE_DEFAULT;
 let crashNote = '';
-// crash-loop protection: if the page died while a brain was loading or answering, use a lighter brain next time
-(() => { const f = store.get('inflight', null); if (f && Date.now() - f.t < 10 * 60 * 1000 && LIGHTER[f.model]) { settings.model = LIGHTER[f.model]; crashNote = 'Last time your device ran out of memory, so OMEGA switched to a lighter brain.'; } store.set('inflight', null); store.set('settings', settings); })();
+// crash protection: if the page died while a brain was loading or answering, retry the same saved brain;
+// only after it dies twice in a row, move to a lighter brain, and only to one that's already saved (never force a new download)
+let crashFrom = null;
+(() => {
+  const f = store.get('inflight', null); store.set('inflight', null);
+  if (!f || Date.now() - f.t > 10 * 60 * 1000) return;
+  const c = store.get('crashes', null), n = c && c.model === f.model ? c.n + 1 : 1;
+  store.set('crashes', { model: f.model, n });
+  if (n >= 2) crashFrom = f.model;
+})();
+store.set('settings', settings); // keep the migrated setting
+// the page going into the background (switching apps, locking the phone) is not a crash
+let inflightRec = null;
+const setInflight = rec => { inflightRec = rec; store.set('inflight', document.visibilityState === 'hidden' ? null : rec); };
+document.addEventListener('visibilitychange', () => store.set('inflight', document.visibilityState === 'hidden' ? null : inflightRec));
+addEventListener('pagehide', () => store.set('inflight', null));
+// choose a brain that is already saved on this device, so OMEGA never asks to download again when one is there
+async function pickSavedBrain() {
+  if (crashFrom) {
+    let k = LIGHTER[crashFrom];
+    while (k) { if (fitsDevice(modelOf(k)) && await isCached(modelOf(k)).catch(() => false)) { settings.model = k; crashNote = 'Your device ran low on memory twice, so OMEGA switched to a lighter brain that was already saved.'; break; } k = LIGHTER[k]; }
+    crashFrom = null; store.set('crashes', null); store.set('settings', settings);
+  }
+  if (await isCached(modelOf(settings.model)).catch(() => false)) return;
+  for (const m of MODELS) if (fitsDevice(m) && await isCached(m).catch(() => false)) { settings.model = m.key; store.set('settings', settings); return; }
+}
 let chat = null, busy = false, stopFlag = false;
 let webllm = null, wllamaMod = null, engine = null, loadedKey = null, loading = null, hasF16 = null;
 const codes = {}; let seq = 0;
@@ -454,16 +478,16 @@ function loadBrain(key, onProgress) {
     while (true) {
       const m = modelOf(key);
       const cb = p => { onProgress && onProgress(p, m); setStatus(`Loading ${m.name}… ${Math.round((p.progress || 0) * 100)}%`); };
-      store.set('inflight', { model: key, t: Date.now(), what: 'load' });
+      setInflight({ model: key, t: Date.now(), what: 'load' });
       try {
         if (engine) { await engine.unload(); engine = null; loadedKey = null; }
         engine = m.engine === 'cpu' ? await startCpuBrain(m, cb) : await startGpuBrain(m, cb);
-        loadedKey = key; settings.model = key; store.set('settings', settings); store.set('inflight', null);
+        loadedKey = key; settings.model = key; store.set('settings', settings); setInflight(null);
         try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) { }
         setStatus(''); refreshWelcome();
         return engine;
       } catch (err) {
-        store.set('inflight', null); engine = null; loadedKey = null;
+        setInflight(null); engine = null; loadedKey = null;
         // graphics chip missing/crashed, or out of memory: fall back to a lighter brain automatically
         const next = LIGHTER[key] || (m.engine === 'gpu' ? (IS_PHONE ? PHONE_DEFAULT : 'cpu-llama-1b') : null);
         if (next && tries < 4 && (isGpuCrash(err) || m.engine === 'gpu')) { tries++; key = next; onProgress && onProgress({ progress: 0, text: `${m.name} couldn't start here, switching to ${modelOf(next).name}…` }, modelOf(next)); continue; }
@@ -519,6 +543,7 @@ async function refreshWelcome() {
   const first = profile.name ? ', ' + esc(profile.name.split(' ')[0]) : '';
   let setup = '';
   if (!engine) {
+    if (!loading) await pickSavedBrain();
     const m = modelOf(settings.model);
     const cached = await isCached(m);
     if (!wasmCheck()) setup = `<div class="setup"><h2>This browser can't run OMEGA's brain</h2><p>Use Safari on iPhone or Chrome on a computer. Live info still works: ask about weather, news or the time.</p></div>`;
@@ -632,7 +657,7 @@ async function send() {
     if (!engine) {
       try {
         if (loading) { ui.work.hidden = false; ui.wt.textContent = 'Waking up OMEGA…'; await loading; }
-        else if (await isCached(modelOf(settings.model))) { ui.work.hidden = false; ui.wt.textContent = 'Waking up OMEGA…'; await loadBrain(settings.model, p => { ui.wt.textContent = `Waking up OMEGA… ${Math.round((p.progress || 0) * 100)}%`; }); }
+        else if ((await pickSavedBrain(), await isCached(modelOf(settings.model)))) { ui.work.hidden = false; ui.wt.textContent = 'Waking up OMEGA…'; await loadBrain(settings.model, p => { ui.wt.textContent = `Waking up OMEGA… ${Math.round((p.progress || 0) * 100)}%`; }); }
         else throw Object.assign(new Error('OMEGA needs its brain first. Tap "Download OMEGA\'s brain" on the home screen.'), { setup: true });
       } catch (e) {
         if (liveShown) { turn.text = fallback(e.setup ? "My brain isn't downloaded yet, so I can't chat, but I can still look things up." : "My brain couldn't start just now."); render(ui.ans, turn.text); return; }
@@ -648,7 +673,7 @@ async function send() {
     const opts = { temperature: codeMode ? 0.3 : 0.7, maxTokens: IS_PHONE ? (codeMode ? 1400 : 500) : (codeMode ? 2000 : 800), onText: out => { render(ui.ans, thinkStrip(out), true); toBottom(); } };
     render(ui.ans, '', true); toBottom(); // shows "Thinking…" until the first words arrive
     const run = async msgs => thinkStrip(await engine.chat(msgs, opts)).trim();
-    store.set('inflight', { model: loadedKey, t: Date.now(), what: 'answer' });
+    setInflight({ model: loadedKey, t: Date.now(), what: 'answer' });
     try { turn.text = await run(messages); }
     catch (e) {
       if (isGpuCrash(e)) {
@@ -659,12 +684,13 @@ async function send() {
         ui.work.hidden = false; ui.wt.textContent = `Out of memory. Switching to ${modelOf(to).name}…`;
         await loadBrain(to, p => { ui.wt.textContent = `Out of memory. Loading ${modelOf(to).name}… ${Math.round((p.progress || 0) * 100)}%`; });
         messages[0].content = systemPrompt(codeMode, !!live);
-        store.set('inflight', { model: loadedKey, t: Date.now(), what: 'answer' });
+        setInflight({ model: loadedKey, t: Date.now(), what: 'answer' });
         turn.text = await run(messages.slice(0, 1).concat([{ role: 'user', content: clip(userContent, 2000) }]));
         ui.wt.textContent = `Switched to ${modelOf(loadedKey).name} to save memory`;
       } else if (/context|too long|exceed|prompt|n_ctx/i.test(String(e.message))) { turn.text = await run([messages[0], { role: 'user', content: clip(userContent, 1800) }]); }
       else throw e;
-    } finally { store.set('inflight', null); }
+    } finally { setInflight(null); }
+    if (turn.text) store.set('crashes', null); // answered fine: reset the crash count
     if (!turn.text) turn.text = stopFlag ? '(stopped)' : "Hmm, I didn't get anything there. Try asking again?";
     render(ui.ans, turn.text);
     if (!live && !ui.wt.textContent.startsWith('Checked')) ui.work.hidden = true;
