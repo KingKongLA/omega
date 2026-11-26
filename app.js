@@ -7,7 +7,7 @@ const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.89';
 const WLLAMA_URL = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/index.js';
 const WLLAMA_WASM = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/wasm/wllama.wasm';
 const PROXY = 'https://proxy.cors.dev/';
-const VERSION = '3.2.0';
+const VERSION = '3.3.0';
 
 const MODELS = [
   { key: 'cpu-qwen3-0.6b', engine: 'cpu', name: 'Qwen3 0.6B', repo: 'unsloth/Qwen3-0.6B-GGUF', file: 'Qwen3-0.6B-Q4_K_M.gguf', sizeMB: 400, memMB: 650, thinking: true, desc: 'Recommended for phones and tablets. Runs on the processor, so it does not crash.' },
@@ -408,6 +408,19 @@ async function toolWeb(text) {
   if (!out.length) throw new Error('No web sources answered');
   return { label: 'Web', text: `WEB SEARCH for "${q}" (live):\n` + out.join('\n\n'), sources };
 }
+// deep research: several searches + reading the top pages, then the brain writes a report with sources
+async function toolResearch(text) {
+  const q = cleanQuery(text.replace(/^(please\s+)?(do (some )?)?(deep\s+)?(research|deep dive)(\s+(on|into|about))?\s*/i, '')) || cleanQuery(text);
+  const year = new Date().getFullYear();
+  const runs = await Promise.allSettled([toolWeb(q), toolWeb(q + ' ' + year), toolWeb(q + ' pros and cons tips')]);
+  const parts = [], sources = [], seen = new Set();
+  for (const r of runs) if (r.status === 'fulfilled') { parts.push(r.value.text); for (const x of r.value.sources) if (!seen.has(x.url)) { seen.add(x.url); sources.push(x); } }
+  if (!parts.length) throw new Error('No web sources answered');
+  const pages = sources.filter(x => !/wikipedia|duckduckgo/i.test(x.url)).slice(0, 3);
+  const reads = await Promise.allSettled(pages.map(x => toolRead(x.url)));
+  for (const r of reads) if (r.status === 'fulfilled') parts.push(clip(r.value.text, 2500));
+  return { label: 'Research', text: `DEEP RESEARCH on "${q}" (searched ${runs.filter(r => r.status === 'fulfilled').length} times and read ${reads.filter(r => r.status === 'fulfilled').length} pages just now). Write a clear, organized report with headings and bullet points, and cite sources by name:\n\n` + parts.join('\n\n'), sources: sources.slice(0, 8) };
+}
 async function toolRead(url) {
   const t = await fetchT('https://r.jina.ai/' + url, { type: 'text', ms: 20000 });
   return { label: 'Page', text: `PAGE CONTENT of ${url} (read just now):\n` + clip(t.split('Markdown Content:').pop(), 4500), sources: [{ title: url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 40), url }] };
@@ -547,6 +560,7 @@ function decideTools(text) {
   const t = text.toLowerCase(), tools = [];
   const url = ((text.match(/https?:\/\/[^\s)<>"']+/) || [])[0] || '').replace(/[.,!?;:]+$/, '');
   if (url) tools.push(['read', () => toolRead(url)]);
+  if (/^(please\s+)?(do (some )?)?(deep\s+)?(research|deep dive)\b/.test(t) && t.split(/\s+/).length >= 2) return [['research', () => toolResearch(text)]];
   if (isClockQuestion(t)) tools.push(['time', () => toolTime(text)]);
   if (/\b(weather|temperature|forecast|rain(ing|y)?|snow(ing|y)?|humid|humidity|how hot|how cold|degrees outside|sunny|cloudy|windy|thunderstorms?|umbrella|jacket)\b/.test(t) && !/\b(song|album|lyrics|movie|film|band|rapper|track)\b/.test(t) || /\b(outside|outdoors?|beach|park|hike|bbq|barbecue|pour concrete|roofing|paint the)\b/.test(t) && /\b(today|tomorrow|tonight|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday|this week)\b/.test(t)) tools.push(['weather', () => toolWeather(text)]);
   if (/\b(bitcoin|btc|ethereum|eth|crypto|solana|dogecoin|doge|xrp|cardano|litecoin|shiba|pepe)\b/.test(t) && /\b(price|worth|cost|how much|value|at|today|now|up|down)\b/.test(t)) tools.push(['crypto', () => toolCrypto(text)]);
@@ -704,7 +718,8 @@ function loadBrain(key, onProgress) {
   loading.catch(() => { setStatus(''); }).finally(() => { loading = null; loadingKey = null; });
   return loading;
 }
-async function dropEngine() { const e = engine; engine = null; loadedKey = null; try { e && await e.unload(); } catch (_) { } }
+async function dropEngine() { if (typeof enginePending !== 'undefined' && enginePending) { try { e0stop(); } catch (_) { } await Promise.race([enginePending.catch(() => { }), new Promise(r => setTimeout(r, 60000))]); } const e = engine; engine = null; loadedKey = null; try { e && await e.unload(); } catch (_) { } }
+function e0stop() { engine && engine.stop(); }
 const thoughtsOf = t => { const m = String(t).match(/<think>([\s\S]*?)(?:<\/think>|$)/); return m ? m[1].trim() : ''; };
 const thinkOn = () => $('#thinkChip') && $('#thinkChip').getAttribute('aria-pressed') === 'true';
 function showThoughts(ui, out, t0, done) {
@@ -727,29 +742,51 @@ function systemPrompt(codeMode, hasLive) {
   const l = lessons.slice(-6).map(x => `- When asked "${clip(x.q, 120)}", ${name} said: ${clip(x.fix, 300)}`).join('\n');
   return [
     `You are OMEGA, ${name}'s personal AI assistant. You are an AI, not a person, so don't pretend to have a body, a personal life or human experiences. Happily help with anything ${name} asks: questions, advice, stories, jokes, scripts, captions, plans and code. Your name is OMEGA: if asked who or what you are, say you are OMEGA, ${name}'s own AI that runs right on their device (not ChatGPT, not Claude). Talk in a casual, warm, direct way, like a helpful friend texting back. Reply to exactly what ${name} said. Short answers for simple stuff, more detail when it's needed.`,
+    `Today is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}${profile.city ? ` and ${name} is in ${profile.city}` : ''}.`,
     profile.style ? `How ${name} wants you to talk: ${profile.style}` : '',
     profile.about ? `About ${name}: ${profile.about}` : '',
     f ? `Facts about ${name} (when ${name} asks about "my ...", answer with "your ..."):\n${f}` : '',
     l ? `Feedback ${name} gave you before (follow it):\n${l}` : '',
-    hasLive ? 'The message includes LIVE INFO fetched from the internet just now: answer from it, copy numbers, times and names exactly as written, and name the source.' : (store.get('promptVariant', '') === 'b' ? 'Answer common-knowledge questions directly. If you really do not know something, say so instead of making it up.' : 'If you do not know something, say so instead of making it up.'),
+    (store.get('promptVariant', '') === 'b' ? 'Answer common-knowledge questions directly. If you really do not know something, say so instead of making it up.' : 'If you do not know something, say so instead of making it up.'),
     codeMode ? 'CODING MODE: write complete, working code in fenced code blocks with a language tag (```html, ```javascript, ```python). For a game, app, website or anything visual: reply with ONE short sentence, then ONE complete self-contained ```html file (all CSS and JavaScript inside it, no outside files or images). It is played on a phone: fill the screen, and make taps/touches work (touchstart) as well as clicks and keys. Keep it simple so it is finished and works. Do not explain the code after it. For plain scripts, JavaScript runs in a worker (use console.log).' : '',
   ].filter(Boolean).join('\n\n');
 }
+// questions about yourself ("what business do I run?"): hand the brain the matching saved facts right next to the question
+const STOPW = new Set('the a an i my me is are was do does did what which who how when where why you your of to in on for and or it at with about again'.split(' '));
+function memoryHint(text) {
+  if (!/\b(i|my|me|mine)\b/i.test(text) || !facts.length) return '';
+  const words = text.toLowerCase().match(/[a-z']{3,}/g) || []; const key = words.filter(w => !STOPW.has(w));
+  const scored = facts.map(f => ({ f, n: key.filter(w => f.toLowerCase().includes(w.replace(/s$/, ''))).length })).filter(x => x.n > 0).sort((a, b) => b.n - a.n).slice(0, 3);
+  return scored.length ? `(What I told you before that may help: ${scored.map(x => x.f).join('; ')})\n\n` : '';
+}
 function historyFor(maxChars, keepCode) {
   const turns = (chat && chat.turns) || [];
-  const out = []; let used = 0, i = turns.length - 1, codeKept = !keepCode;
-  for (; i >= 0; i--) {
+  // what each turn looks like to the brain: the newest code stays whole (so "make it bigger" works), older code becomes [code]
+  let codeKept = !keepCode;
+  const parts = new Array(turns.length);
+  for (let i = turns.length - 1; i >= 0; i--) {
     const t = turns[i], raw = String(t.text || '');
     let c;
-    // the most recent code stays whole (so "make it bigger" / "fix it" can work on it); older code is shortened to [code]
-    if (!codeKept && t.role !== 'user' && /```/.test(raw)) { c = raw.length <= maxChars * 0.8 ? raw : clip(raw, Math.floor(maxChars * 0.8)); codeKept = true; } // only the newest code, never an older one
+    if (!codeKept && t.role !== 'user' && /```/.test(raw)) { c = raw.length <= maxChars * 0.8 ? raw : clip(raw, Math.floor(maxChars * 0.8)); codeKept = true; }
     else c = clip(raw.replace(/```[\s\S]*?(```|$)/g, '[code]'), 2500);
-    if (used + c.length > maxChars) break;
-    used += c.length;
-    out.unshift({ role: t.role === 'user' ? 'user' : 'assistant', content: c });
+    parts[i] = { role: t.role === 'user' ? 'user' : 'assistant', content: c };
   }
+  // speed: keep the START of the chat window fixed and only jump it forward (dropping about half) when it gets full.
+  // The brain reuses everything it already read (prompt cache), so it only reads the new message most of the time,
+  // instead of re-reading the whole chat on every message.
+  const hs = chat ? (chat.hs = chat.hs || {}) : {};
+  let st = Math.min(hs[maxChars] || 0, Math.max(0, turns.length - 1));
+  const size = from => parts.slice(from).reduce((n, p) => n + p.content.length, 0);
+  if (size(st) > maxChars) {
+    if (window.__omegaNoSnap) { st = turns.length - 1; while (st > 0 && size(st - 1) <= maxChars) st--; }
+    else while (st < turns.length - 2 && size(st) > maxChars * 0.5) st++;
+    while (st < turns.length - 1 && turns[st].role !== 'user') st++;
+    while (st < turns.length - 1 && size(st) > maxChars) st++; // one huge message: still fit
+  }
+  hs[maxChars] = st;
+  const out = parts.slice(st);
   // long chat: remind the brain what came earlier (just the questions), so old topics aren't completely forgotten
-  const older = turns.slice(0, i + 1).filter(t => t.role === 'user').map(t => clip(String(t.text || '').replace(/\s+/g, ' '), 70));
+  const older = turns.slice(0, st).filter(t => t.role === 'user').map(t => clip(String(t.text || '').replace(/\s+/g, ' '), 70));
   if (older.length && out.length) out[0] = { role: out[0].role, content: (out[0].role === 'user' ? `(Earlier in this chat ${profile.name || 'the user'} asked about: ${older.slice(-12).join(' / ')})\n\n` : '') + out[0].content };
   if (older.length && out.length && out[0].role !== 'user') out.unshift({ role: 'user', content: `(Earlier in this chat I asked about: ${older.slice(-12).join(' / ')})` }), out.splice(1, 0, { role: 'assistant', content: 'Got it.' });
   return out;
@@ -766,7 +803,7 @@ const col = $('#col'), scroller = $('#scroll'), inp = $('#input'), sendBtn = $('
 let stick = true; scroller.addEventListener('scroll', () => { stick = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80; });
 const toBottom = f => { if (f || stick) scroller.scrollTop = scroller.scrollHeight; };
 const SUGG = [
-  ['Find more customers', 'for my construction business without paying for ads'],
+  ['Research', 'free ways to get more construction leads in LA'],
   ["What's the weather", 'this weekend?'],
   ['Write me a script', 'for a 30-second GTA 6 clip'],
   ["What's in the news", 'today?'],
@@ -784,7 +821,7 @@ async function refreshWelcome() {
     if (crashBlocked && !loading) setup = `<div class="setup"><h2>OMEGA's brain crashed twice</h2><p>Your ${DEVICE} ran out of memory while ${esc(m.name)} was running. Close other apps and tabs, then try again${lighter ? `, or switch to ${esc(lighter.name)} (smaller, about ${sizeText(lighter.sizeMB)} download)` : ''}.</p><button class="btn pri" id="crashRetry">Try again</button>${lighter ? ` <button class="btn" id="crashLighter">Use ${esc(lighter.name)}</button>` : ''}<div class="bar" id="setupBarWrap" hidden><div class="fill" id="setupBar"></div></div><p class="hint" id="setupText" style="margin-top:8px"></p></div>`;
     else if (!wasmCheck()) setup = `<div class="setup"><h2>This browser can't run OMEGA's brain</h2><p>Use Safari on iPhone or Chrome on a computer. Live info still works: ask about weather, news or the time.</p></div>`;
     else if (cached || loading) { setup = `<div class="setup"><h2>Waking up OMEGA…</h2><p>Loading ${esc(m.name)} from this device. This takes a few seconds.</p><div class="bar" id="setupBarWrap"><div class="fill" id="setupBar"></div></div><p class="hint" id="setupText" style="margin-top:8px"></p></div>`; if (!loading) loadBrain(m.key, setupProgress).catch(e => showSetupError(e)); }
-    else setup = `<div class="setup"><h2>One-time setup</h2>${settings.auto && deviceCache ? `<p style="margin-bottom:6px"><b>Picked for your ${esc(kindWord(deviceCache.kind))}:</b> ${esc(m.name)}. ${esc(deviceCache.why)}</p>` : ''}<p>OMEGA's brain (${esc(m.name)}) downloads to this device once, then runs offline. It's about ${sizeText(m.sizeMB)}, so use Wi-Fi and keep this page open while it downloads.</p><button class="btn pri" id="setupGo">Download OMEGA's brain</button><div class="bar" id="setupBarWrap" hidden><div class="fill" id="setupBar"></div></div><p class="hint" id="setupText" style="margin-top:8px"></p></div>`;
+    else setup = `<div class="setup"><h2>One-time setup</h2>${settings.auto && deviceCache ? `<p style="margin-bottom:6px"><b>Picked for your ${esc(kindWord(deviceCache.kind))}:</b> ${esc(m.name)}. ${esc(deviceCache.why)}</p>` : ''}${cloudOn() ? `<p style="margin-bottom:6px"><b>You can chat right now</b> with the free cloud brain. Download the phone brain too, so OMEGA also works offline and keeps your chats on this phone.</p>` : ''}<p>OMEGA's brain (${esc(m.name)}) downloads to this device once, then runs offline. It's about ${sizeText(m.sizeMB)}, so use Wi-Fi and keep this page open while it downloads.</p><button class="btn pri" id="setupGo">Download OMEGA's brain</button><div class="bar" id="setupBarWrap" hidden><div class="fill" id="setupBar"></div></div><p class="hint" id="setupText" style="margin-top:8px"></p></div>`;
   }
   let upgrade = '';
   if (engine && settings.auto && !modelOf(loadedKey).vision) {
@@ -949,6 +986,23 @@ async function answerWithEyes(text, att, media, ui, turn) {
   const ask = (vid ? `Notes about moments from the user's video (${Math.round(vid.duration || 0)} seconds long), in time order:\n${notes.join('\n')}\n\n` : '') + (fileText ? `Attached text:\n${clip(fileText, 3000)}\n\n` : '') + `${imgs.length > 1 ? `There are ${imgs.length} photos. ` : ''}${text}`;
   parts.push({ type: 'text', text: ask });
   const sys = `You are OMEGA, ${profile.name || 'the user'}'s friendly AI assistant. You can see the photos the user sends. Describe what is really there, read any text exactly, and answer the question directly and casually. If you are not sure about something in the picture, say so.`;
+  // online with the free cloud brain: OMEGA's eyes describe the picture, then the big cloud brain answers (much smarter answers)
+  if (cloudOn() && cloudFree() && !polliKey() && !stopFlag) {
+    try {
+      ui.work.hidden = false; ui.wt.textContent = vid ? 'Looking closely at your video…' : 'Looking closely at your photo…';
+      const dparts = imgs.map(im => ({ type: 'image', data: im.data }));
+      let desc = '';
+      if (dparts.length) desc = (await engine.chat([{ role: 'system', content: sys }, { role: 'user', content: [...dparts, { type: 'text', text: `Describe ${imgs.length > 1 ? 'each picture' : 'this picture'} in detail: the objects, people, animals, colors, setting and anything unusual. Copy any text you see exactly.` }] }], { maxTokens: 320, temperature: 0.1, onText: () => { } })).trim();
+      if (stopFlag) { turn.text = '(stopped)'; render(ui.ans, turn.text); return; }
+      const seen = [vid ? 'Moments from the video:\n' + notes.join('\n') : '', desc ? (imgs.length > 1 ? 'The photos:\n' : 'The photo:\n') + desc : ''].filter(Boolean).join('\n\n');
+      if (!seen.trim()) throw new Error('saw nothing');
+      await answerInCloud(`${text || (vid ? 'What happens in this video?' : 'What is in this photo?')}\n\n(I attached ${vid ? `a ${Math.round(vid.duration || 0)}-second video` : imgs.length > 1 ? imgs.length + ' photos' : 'a photo'}. You can't see it yourself, but OMEGA's eyes looked at it and wrote this:\n${seen}\n${fileText ? '\nAttached text:\n' + clip(fileText, 3000) + '\n' : ''}Answer my question using that. Don't mention the notes, just answer naturally.)`, '', null, ui, turn);
+      turn.think = 'What OMEGA saw:\n' + seen;
+      showThoughts(ui, '<think>' + turn.think + '</think>', Date.now(), true); ui.think.querySelector('summary').textContent = vid ? '🎬 What OMEGA saw' : '👁 What OMEGA saw';
+      ui.wt.textContent = `☁️ OMEGA's eyes looked, the cloud brain answered`;
+      return;
+    } catch (e) { if (stopFlag) return; ui.wt.textContent = 'Answering with the phone brain…'; }
+  }
   ui.wt.textContent = vid ? 'Watched your video' : imgs.length > 1 ? `Looked at ${imgs.length} photos` : 'Looked at your photo';
   render(ui.ans, '', true);
   const out = await engine.chat([{ role: 'system', content: sys }, { role: 'user', content: parts }], { maxTokens: 400, temperature: 0.2, onText: o => { render(ui.ans, thinkStrip(o), true); toBottom(); } });
@@ -957,15 +1011,29 @@ async function answerWithEyes(text, att, media, ui, turn) {
   render(ui.ans, turn.text);
 }
 // ---------------- optional cloud brain (OpenRouter, free models, your own key stays on this device) ----------------
-const cloudOn = () => !!(settings.cloud && settings.cloudKey && navigator.onLine !== false);
+// two cloud brains: your own OpenRouter key if you added one, otherwise Pollinations' free brain (no key, no signup, text only)
+if (/[?&]nocloud\b/.test(location.search)) window.__omegaNoCloud = true; if (/[?&]nosnap\b/.test(location.search)) window.__omegaNoSnap = true; // test switches
+const cloudOn = () => settings.cloud !== false && navigator.onLine !== false && !window.__omegaNoCloud;
+const cloudFree = () => !settings.cloudKey;
+const polliKey = () => /^(sk_|pk_|plln_)/.test(settings.cloudKey || ''); // a free Pollinations key (enter.pollinations.ai): faster, and the cloud can see photos
+let cloudCoolUntil = 0; // after a "too many requests" from the free brain, let the phone brain answer for a bit
 let cloudAbort = null;
 async function cloudChat(messages, o) {
   cloudAbort = new AbortController(); const sig = cloudAbort.signal;
   const t = setTimeout(() => cloudAbort.abort(), 120000);
   try {
-    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.cloudKey, 'X-Title': 'OMEGA' },
+    if (cloudFree() && Date.now() < cloudCoolUntil) throw new Error('free cloud brain is busy, try again in a minute');
+    const free = cloudFree();
+    const busyNote = setTimeout(() => { if (o.ui && !o.got) o.ui.wt.textContent = '☁️ The free cloud brain is busy, your answer is on the way…'; }, 9000);
+    const r = polliKey()
+      ? await fetch('https://gen.pollinations.ai/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.cloudKey }, body: JSON.stringify({ model: 'openai', messages, stream: true, max_tokens: o.maxTokens, temperature: o.temperature }) })
+      : free
+      ? await fetch('https://text.pollinations.ai/openai', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'openai', messages: messages.map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : m.content.filter(p => p.type === 'text').map(p => p.text).join('\n') })), stream: true, max_tokens: o.maxTokens, temperature: o.temperature, private: true, referrer: 'omega' }) })
+      : await fetch('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.cloudKey, 'X-Title': 'OMEGA' },
       body: JSON.stringify({ model: settings.cloudModel || 'openrouter/free', messages, stream: true, max_tokens: o.maxTokens, temperature: o.temperature }) });
-    if (!r.ok) { let m = 'HTTP ' + r.status; try { const j = await r.json(); m = (j.error && j.error.message) || m; } catch (_) { } if (r.status === 401) m = 'the cloud key is not valid'; if (r.status === 429) m = 'free limit reached for now'; throw new Error(m); }
+    clearTimeout(busyNote);
+    if (free && r.status === 429) cloudCoolUntil = Date.now() + 60000;
+    if (!r.ok) { let m = 'HTTP ' + r.status; try { const j = await r.json(); m = (j.error && j.error.message) || m; } catch (_) { } if (r.status === 401 || r.status === 403) m = 'the cloud key is not valid'; if (r.status === 429) m = 'free limit reached for now'; throw new Error(m); }
     const rd = r.body.getReader(), dec = new TextDecoder(); let buf = '', text = '', reason = '', model = '';
     while (true) {
       const { done, value } = await rd.read(); if (done) break;
@@ -973,7 +1041,7 @@ async function cloudChat(messages, o) {
       for (const ln of lines) {
         const l = ln.trim(); if (!l.startsWith('data:')) continue; const d = l.slice(5).trim(); if (d === '[DONE]') continue;
         try { const j = JSON.parse(d); if (j.error) throw new Error(j.error.message || 'cloud error'); model = j.model || model; const dl = (j.choices && j.choices[0] && j.choices[0].delta) || {}; reason += dl.reasoning || dl.reasoning_content || ''; text += dl.content || ''; } catch (e) { if (/cloud error|error/i.test(e.message) && !/JSON/.test(e.message)) throw e; }
-        o.onText(reason ? '<think>' + reason + (text ? '</think>' : '') + text : text);
+        o.got = true; o.onText(reason ? '<think>' + reason + (text ? '</think>' : '') + text : text);
         if (stopFlag) { cloudAbort.abort(); break; }
       }
       if (stopFlag) break;
@@ -986,10 +1054,11 @@ async function cloudChat(messages, o) {
 }
 const toDataURL = buf => new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(new Blob([buf], { type: 'image/jpeg' })); });
 async function answerInCloud(text, live, att, ui, turn, media = []) {
+  if (media.length && cloudFree() && !polliKey()) throw new Error('the free cloud brain cannot see photos, using OMEGA\'s eyes');
   ui.work.hidden = false; ui.wt.textContent = '☁️ Asking the cloud brain…';
   const codeMode = $('#codeChip').getAttribute('aria-pressed') === 'true';
   const files = att ? attText(att) : '';
-  const content = (live ? 'LIVE INFO (fetched just now):\n' + clip(live, 8000) + '\n\n(Use the LIVE INFO above; it is current. Copy numbers exactly. If it does not contain the exact answer, say so.)\n---\n' : '') + (files ? `Attached file(s):\n-----\n${clip(files, 30000)}\n-----\n\n` : '') + text;
+  const content = (live ? 'LIVE INFO (fetched just now):\n' + clip(live, 14000) + '\n\n(Use the LIVE INFO above; it is current. Copy numbers exactly. If it does not contain the exact answer, say so.)\n---\n' : '') + (files ? `Attached file(s):\n-----\n${clip(files, 30000)}\n-----\n\n` : '') + memoryHint(text) + text;
   let user = content;
   if (media.length) {
     const parts = [];
@@ -1002,9 +1071,11 @@ async function answerInCloud(text, live, att, ui, turn, media = []) {
   }
   const hist = historyFor(12000); if (hist.length) hist.pop();
   const messages = [{ role: 'system', content: systemPrompt(codeMode, !!live) }, ...hist, { role: 'user', content: user }];
-  const t0 = Date.now(), o = { maxTokens: codeMode ? 6000 : 2000, temperature: codeMode ? 0.3 : 0.6, onText: out => { showThoughts(ui, out, t0); render(ui.ans, thinkStrip(out), true); toBottom(); } };
-  render(ui.ans, '', true);
-  const raw = await cloudChat(messages, o);
+  const t0 = Date.now(), o = { ui, maxTokens: codeMode ? 6000 : 2000, temperature: codeMode ? 0.3 : 0.6, onText: out => { showThoughts(ui, out, t0); render(ui.ans, thinkStrip(out), true); toBottom(); } };
+  render(ui.ans, '', true); if (window.OMEGA) window.OMEGA.lastPrompt = messages;
+  let raw;
+  try { raw = await cloudChat(messages, o); }
+  catch (e) { if (stopFlag || !/empty answer|took too long|Failed to fetch|network|HTTP 5/i.test(e.message)) throw e; ui.wt.textContent = '☁️ Asking the cloud brain again…'; raw = await cloudChat(messages, o); } // the free cloud sometimes hiccups: one quick retry
   const th = thoughtsOf(raw); if (th) { turn.think = clip(th, 6000); showThoughts(ui, raw, t0, true); }
   turn.text = thinkStrip(raw).trim() || '(stopped)';
   ui.wt.textContent = `☁️ Answered by the cloud brain${o.model ? ' (' + o.model.replace(/:free$/, '') + ')' : ''}`;
@@ -1065,7 +1136,9 @@ const coarse = window.matchMedia && matchMedia('(pointer:coarse)').matches;
 inp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !coarse && !e.isComposing) { e.preventDefault(); send(); } });
 const SEND_SVG = sendBtn.innerHTML, STOP_SVG = '<svg width="14" height="14" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3" fill="currentColor"/></svg>';
 function setBusy(b) { busy = b; sendBtn.innerHTML = b ? STOP_SVG : SEND_SVG; sendBtn.setAttribute('aria-label', b ? 'Stop' : 'Send'); grow(); }
-sendBtn.onclick = () => { if (busy) { stopFlag = true; try { engine && engine.stop(); } catch (e) { } try { cloudAbort && cloudAbort.abort(); } catch (e) { } } else send(); };
+// Stop answers right away, even while the brain is still reading a long chat (it finishes reading quietly in the background)
+let enginePending = null; const stopWaiters = [];
+sendBtn.onclick = () => { if (busy) { stopFlag = true; stopWaiters.splice(0).forEach(f => f()); try { engine && engine.stop(); } catch (e) { } try { cloudAbort && cloudAbort.abort(); } catch (e) { } } else send(); };
 
 async function send(opts = {}) {
   if (busy) return;
@@ -1078,13 +1151,13 @@ async function send(opts = {}) {
   const spoken = voiceAsk && !opts.redo; voiceAsk = false;
   if (!opts.redo) { inp.value = ''; attachment = null; showAttachment(); grow(); addUser(text, att); chat.turns.push(att ? { role: 'user', text, att: savedAtt(att) } : { role: 'user', text }); if (att) liveAtt.set(chat.turns[chat.turns.length - 1], att); }
   const ui = addBot(); toBottom(true);
-  setBusy(true); stopFlag = false;
+  setBusy(true); stopFlag = false; stopWaiters.length = 0;
   const turn = { role: 'assistant', text: '', sources: [] };
   try {
     const media = att ? att.files.filter(f => (f.kind === 'image' && f.data) || (f.kind === 'video' && f.blob)) : [];
     if (att && att.files.some(f => (f.kind === 'image' || f.kind === 'video')) && !media.length) { turn.text = 'That photo/video is no longer in memory (saved chats keep only a preview). Attach it again with 📎 and ask.'; render(ui.ans, turn.text); return; }
     if (media.length) {
-      if (cloudOn()) { try { await answerInCloud(text, '', att, ui, turn, media); return; } catch (e) { if (stopFlag) return; ui.work.hidden = false; ui.wt.textContent = `Cloud brain unavailable, using OMEGA's own eyes`; } }
+      if (cloudOn() && (!cloudFree() || polliKey())) { try { await answerInCloud(text, '', att, ui, turn, media); return; } catch (e) { if (stopFlag) return; ui.work.hidden = false; ui.wt.textContent = `Cloud brain unavailable, using OMEGA's own eyes`; } }
       await answerWithEyes(text, att, media, ui, turn); return;
     }
     // memory command
@@ -1095,6 +1168,16 @@ async function send(opts = {}) {
     const nm = text.match(/\b(?:my name is|my name's|call me|i'?m called)\s+([A-Z][a-z]{1,20})\b/i), ct = text.match(/\bi (?:live|stay|'m based|am based|live out) in ([A-Za-z][A-Za-z .'-]{2,30}?)(?:[,.!?]|\s+(?:and|but|so|bro)\b|$)/i);
     if (nm && !/^(not|just|so|the|a)$/i.test(nm[1])) { profile.name = nm[1][0].toUpperCase() + nm[1].slice(1); store.set('profile', profile); fillProfile(); }
     if (ct && !NOT_PLACE.test(ct[1])) { profile.city = PLACE_ALIASES[ct[1].trim().toLowerCase()] || ct[1].trim(); store.set('profile', profile); fillProfile(); }
+    // auto-memory (like ChatGPT's "Memory updated"): save clear facts about yourself, e.g. "I run a construction business in LA"
+    if (!rem && settings.autoMemory !== false && !/\?\s*$/.test(text)) {
+      const found = [];
+      for (const part of text.split(/(?<=[.!])\s+|\s+(?:and|but)\s+(?=i\b|my\b)/i)) {
+        const m = part.match(/^(?:yo|hey|so|btw|also|ok|okay|well)?[,\s]*((?:i (?:run|own|work (?:at|as|for)|am a|'m a|am an|'m an|have (?:a|an|two|three|\d+)|drive|study|go to|play|like|love|hate|prefer|can't eat|don't eat|am allergic)|my (?:\w+ ){0,2}(?:is|are|was born))\b.{2,90})$/i);
+        if (m && m[1].split(/\s+/).length >= 4 && !/\b(it|that|this|them|those|one)$/i.test(m[1].replace(/[.!]+$/, '')) && !/\b(name is|you|your|today|right now|tired|hungry|bored|gonna|going to|about to)\b/i.test(m[1])) found.push(m[1].replace(/[.!]+$/, '').trim());
+      }
+      const fresh = found.filter(f => !facts.some(x => x.toLowerCase() === f.toLowerCase()));
+      if (fresh.length) { facts.push(...fresh); facts = facts.slice(-100); store.set('facts', facts); renderFacts(); turn.memo = fresh; }
+    }
     if (rem) { turn.text = `Got it, I'll remember that: ${rem[1].replace(/[.!]+$/, '')}`; render(ui.ans, turn.text); return; } // saved; no brain needed
     if (/\b(make|build|create|code|write|give|gimme|want|play|game)\b/i.test(text)) {
       let game = null; try { game = (await import('./games.js?v=' + VERSION)).findGame(text); } catch (e) { }
@@ -1166,11 +1249,11 @@ async function send(opts = {}) {
     // answer
     const codeMode = $('#codeChip').getAttribute('aria-pressed') === 'true';
     const wantsApp = codeMode && /\b(app|calculator|website|web ?site|page|landing|game|tool|timer|stopwatch|to-?do|todo|tracker|form|quiz|clock|counter|converter|ui|dashboard|portfolio|menu|button)\b/i.test(text) && !/\b(python|script|terminal|command line|node|java|c\+\+|swift|sql)\b/i.test(text);
-    const userContent = (live ? 'LIVE INFO (fetched just now):\n' + clip(live, IS_PHONE && ctxNow() < 8192 ? 2400 : 5000) + '\n\n(Answer using the LIVE INFO above. It is real and current. If it lists headlines or results, summarize the most relevant ones, and prefer the newest dated item. If the LIVE INFO does not contain the exact answer (for example a time, score or date), say you could not find that exact detail and share what you did find. Never guess numbers, times or scores.)\n---\n' : '') + (att && attText(att) ? `Here is the file the user attached (${att.files.map(f => f.name).join(', ')}):\n-----\n${clip(attText(att), Math.max(1200, (ctxNow() - 900) * 3))}\n-----\n\nUsing the file above, answer this: ` : '') + text + (wantsApp ? '\n\n(Make it as ONE complete, working ```html file with the CSS and JavaScript inside. No input() prompts. It must work on a phone screen.)' : '');
+    const userContent = (live ? 'LIVE INFO (fetched just now):\n' + clip(live, IS_PHONE && ctxNow() < 8192 ? 2400 : 5000) + '\n\n(Answer using the LIVE INFO above. It is real and current. Copy numbers, times and names exactly as written, and name the source. If it lists headlines or results, summarize the most relevant ones, and prefer the newest dated item. If the LIVE INFO does not contain the exact answer (for example a time, score or date), say you could not find that exact detail and share what you did find. Never guess numbers, times or scores.)\n---\n' : '') + (att && attText(att) ? `Here is the file the user attached (${att.files.map(f => f.name).join(', ')}):\n-----\n${clip(attText(att), Math.max(1200, (ctxNow() - 900) * 3))}\n-----\n\nUsing the file above, answer this: ` : '') + memoryHint(text) + text + (wantsApp ? '\n\n(Make it as ONE complete, working ```html file with the CSS and JavaScript inside. No input() prompts. It must work on a phone screen.)' : '');
     const win = ctxNow(), big = win >= 8192;
     // keep the last code whole only when this is a change to it ("make it bigger"), not when asking for something new
     const editsCode = codeMode && !/\b(a|an|another|new)\b[\w\s]{0,30}\b(app|game|calculator|website|site|page|tool|timer|script|program)\b/i.test(text) && /\b(it|its|it's|that|this|the|bigger|smaller|change|fix|add|remove|update|improve|instead|faster|slower|color|colour)\b/i.test(text);
-    const hist = historyFor(big ? (IS_PHONE ? (live ? 2000 : codeMode ? 6000 : 4000) : (live ? 7000 : 14000)) : IS_PHONE ? (live ? 1200 : codeMode ? 3000 : 2600) : (live ? 3500 : 6000), editsCode);
+    const hist = historyFor(big ? (IS_PHONE ? 9000 : 16000) : IS_PHONE ? (live ? 1200 : codeMode ? 3000 : 2600) : (live ? 3500 : 6000), editsCode);
     if (hist.length) hist.pop(); // drop the current user turn (already added) — we send the enriched version
     // changing earlier code: give the small brain ONLY that code + the change, so it can't mix up which app it is
     let editContent = null;
@@ -1193,7 +1276,7 @@ async function send(opts = {}) {
     let lastTick = Date.now(), gotWords = false, stalled = false, reloading = false;
     const tick0 = opts.onText; opts.onText = out => { lastTick = Date.now(); gotWords = true; tick0(out); };
     const dog = setInterval(() => { const quiet = Date.now() - lastTick; if (!stopFlag && !reloading && quiet > (window.__omegaDogMs || (gotWords ? 45000 : 150000))) { stalled = true; try { engine && engine.stop(); } catch (e) { } } }, 3000);
-    const run = async msgs => { lastTick = Date.now(); gotWords = false; stalled = false; const raw = await engine.chat(msgs, opts); if (stalled) throw new Error('brain stalled'); const th = thoughtsOf(raw); if (th) turn.think = clip(th, 6000); showThoughts(ui, raw, t0, true); return thinkStrip(raw).trim(); };
+    const run = async msgs => { lastTick = Date.now(); gotWords = false; stalled = false; if (enginePending) { ui.wt.textContent = 'Finishing the last answer…'; await enginePending.catch(() => { }); } const p = engine.chat(msgs, opts); enginePending = p; p.catch(() => { }).finally(() => { if (enginePending === p) enginePending = null; }); const raw = await Promise.race([p, new Promise(r => stopWaiters.push(() => r('')))]); if (stalled) throw new Error('brain stalled'); const th = thoughtsOf(raw); if (th) turn.think = clip(th, 6000); showThoughts(ui, raw, t0, true); return thinkStrip(raw).trim(); };
     setInflight({ model: loadedKey, t: Date.now(), what: 'answer' });
     try { turn.text = await run(messages); }
     catch (e) {
@@ -1242,6 +1325,7 @@ async function send(opts = {}) {
     }
     turn.text = '';
   } finally {
+    if (turn.text && turn.memo) { const mm = document.createElement('div'); mm.className = 'hint memo'; mm.textContent = '🧠 Memory updated: ' + turn.memo.join(' · '); ui.ans.after(mm); }
     if (turn.text) { chat.turns.push(turn); showSources(ui, turn.sources); showActs(ui, turn, text); if (spoken && !stopFlag && settings.voiceReply !== false) { const rb = ui.acts.querySelector('[data-a=read]'); if (rb) speak(turn.text, rb); } }
     else chat.turns.pop();
     saveChats(); setBusy(false); toBottom();
@@ -1308,8 +1392,8 @@ async function renderSettings() {
 $('#cloudOn').onchange = e => { settings.cloud = e.target.checked; store.set('settings', settings); syncCloud(); };
 $('#cloudKey').onchange = e => { settings.cloudKey = e.target.value.trim(); store.set('settings', settings); syncCloud(); };
 function syncCloud() {
-  $('#cloudOn').checked = !!settings.cloud; $('#cloudKey').value = settings.cloudKey || '';
-  $('#cloudState').textContent = settings.cloud ? (settings.cloudKey ? (navigator.onLine === false ? 'On, but you are offline: the phone brain answers.' : 'On: answers come from free cloud models when you are online. Your messages go to OpenRouter.') : 'Paste your free key to turn it on.') : 'Off: everything stays on this device.';
+  $('#cloudOn').checked = settings.cloud !== false; $('#cloudKey').value = settings.cloudKey || '';
+  $('#cloudState').textContent = settings.cloud === false ? 'Off: everything stays on this device.' : navigator.onLine === false ? 'On, but you are offline: the phone brain answers.' : settings.cloudKey ? (polliKey() ? 'On, with your Pollinations key: faster cloud answers, and it can see photos. Your messages go to Pollinations.' : 'On: answers come from free OpenRouter models when you are online. Your messages go to OpenRouter.') : 'On: answers come from a big free cloud brain (Pollinations, no key needed) when you are online. Your messages go to Pollinations. Photos and videos stay with the phone brain. Add an OpenRouter key below for cloud eyes too.';
 }
 $('#autoPick').onchange = e => { settings.auto = e.target.checked; settings.skipRec = null; store.set('settings', settings); if (!chat) refreshWelcome(); };
 $('#loadBtn').onclick = () => {
