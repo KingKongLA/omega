@@ -267,9 +267,16 @@ function currencyPair(text) {
 }
 async function toolCurrency(text) {
   const p = currencyPair(text);
-  const d = await fetchT(`https://api.frankfurter.dev/v1/latest?amount=${p.amt}&base=${p.from}&symbols=${p.to}`);
-  const v = d.rates && d.rates[p.to];
-  return { label: 'Currency', text: `EXCHANGE RATE (Frankfurter / European Central Bank, ${d.date}): ${p.amt} ${p.from} = ${v} ${p.to}`, sources: [{ title: 'Frankfurter', url: 'https://frankfurter.dev/' }] };
+  const frank = fetchT(`https://api.frankfurter.dev/v1/latest?amount=${p.amt}&base=${p.from}&symbols=${p.to}`, { ms: 15000 }).then(d => {
+    const v = d.rates && d.rates[p.to]; if (v == null) throw new Error('no rate');
+    return { label: 'Currency', text: `EXCHANGE RATE (Frankfurter / European Central Bank, ${d.date}): ${p.amt} ${p.from} = ${v} ${p.to}`, sources: [{ title: 'Frankfurter', url: 'https://frankfurter.dev/' }] };
+  });
+  const er = fetchT(`https://open.er-api.com/v6/latest/${p.from}`, { ms: 15000 }).then(d => {
+    const r = d.rates && d.rates[p.to]; if (r == null) throw new Error('no rate');
+    const v = Math.round(p.amt * r * 100) / 100;
+    return { label: 'Currency', text: `EXCHANGE RATE (ExchangeRate-API, ${(d.time_last_update_utc || '').slice(0, 16)}): ${p.amt} ${p.from} = ${v} ${p.to} (1 ${p.from} = ${r} ${p.to})`, sources: [{ title: 'ExchangeRate-API', url: 'https://www.exchangerate-api.com/' }] };
+  });
+  return Promise.any([frank, er]);
 }
 function decideTools(text) {
   const t = text.toLowerCase(), tools = [];
