@@ -7,12 +7,12 @@ const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.89';
 const WLLAMA_URL = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/index.js';
 const WLLAMA_WASM = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/wasm/wllama.wasm';
 const PROXY = 'https://proxy.cors.dev/';
-const VERSION = '3.1.0';
+const VERSION = '3.2.0';
 
 const MODELS = [
   { key: 'cpu-qwen3-0.6b', engine: 'cpu', name: 'Qwen3 0.6B', repo: 'unsloth/Qwen3-0.6B-GGUF', file: 'Qwen3-0.6B-Q4_K_M.gguf', sizeMB: 400, memMB: 650, thinking: true, desc: 'Recommended for phones and tablets. Runs on the processor, so it does not crash.' },
   { key: 'cpu-qwen3.5-0.8b', engine: 'cpu', name: 'Qwen3.5 0.8B', repo: 'unsloth/Qwen3.5-0.8B-GGUF', file: 'Qwen3.5-0.8B-Q4_K_M.gguf', sizeMB: 533, memMB: 800, thinking: true, desc: 'Newer and smarter than Qwen3 0.6B, still light enough for phones.' },
-  { key: 'cpu-lfm2.5-1.2b', engine: 'cpu', name: 'LFM2.5 1.2B', repo: 'LiquidAI/LFM2.5-1.2B-Instruct-GGUF', file: 'LFM2.5-1.2B-Instruct-Q4_K_M.gguf', sizeMB: 731, memMB: 1000, desc: 'Fast and sharp, built for phones by Liquid AI.' },
+  { key: 'cpu-lfm2.5-1.2b', engine: 'cpu', name: 'LFM2.5 1.2B', repo: 'LiquidAI/LFM2.5-1.2B-Instruct-GGUF', file: 'LFM2.5-1.2B-Instruct-Q4_K_M.gguf', sizeMB: 731, memMB: 1000, ctx: 8192, desc: 'Fast and sharp, built for phones by Liquid AI.' },
   { key: 'cpu-llama-1b', engine: 'cpu', name: 'Llama 3.2 1B', repo: 'unsloth/Llama-3.2-1B-Instruct-GGUF', file: 'Llama-3.2-1B-Instruct-Q4_K_M.gguf', sizeMB: 810, memMB: 1050, desc: 'Smarter, more natural chat. A little slower.' },
   { key: 'cpu-qwen3-1.7b', engine: 'cpu', name: 'Qwen3 1.7B', repo: 'unsloth/Qwen3-1.7B-GGUF', file: 'Qwen3-1.7B-Q4_K_M.gguf', sizeMB: 1110, memMB: 1400, thinking: true, experimentalIOS: true, desc: 'Much smarter. Great on computers and strong phones. On iPhone it is experimental: if it runs out of memory, OMEGA goes back to your smaller brain.' },
   { key: 'cpu-qwen3-4b', engine: 'cpu', name: 'Qwen3 4B', repo: 'unsloth/Qwen3-4B-Instruct-2507-GGUF', file: 'Qwen3-4B-Instruct-2507-Q4_K_M.gguf', sizeMB: 2500, memMB: 3200, desc: 'Smartest processor brain. For computers with 8+ cores and plenty of memory.' },
@@ -555,7 +555,7 @@ function decideTools(text) {
   // asking OMEGA to make/build/write something: answer with its own work, don't search the web (unless asked to search)
   const build = /\b(make|build|write|create|code|program|generate|design|draw|develop)\b/.test(t) && !/\b(search|look up|google|news|latest|price)\b/.test(t);
   // questions about the user themselves are answered from memory, not the web
-  const personal = /\b(my name|my city|my business|my job|my age|my birthday|about me|who am i|do you (know|remember) (me|my)|what do you know about me|my favorite|my girlfriend|my boyfriend|my wife|my husband|my mom|my dad|my kids?)\b/.test(t) || /\b(when|what|where|how|who) (do|did|am|was|should) i\b.*\bmy\b/.test(t);
+  const personal = /\b(my name|my city|my business|my job|my age|my birthday|about me|who am i|do you (know|remember) (me|my)|what do you know about me|my favorite|my girlfriend|my boyfriend|my wife|my husband|my mom|my dad|my kids?)\b/.test(t) || /\b(when|what|where|how|who) (do|did|am|was|should) i\b.*\bmy\b/.test(t) || /\b(what|how) should i\b|\bshould i\b|\bwhat do you think\b|\badvice\b/.test(t) && !/\b(weather|rain|news|price|buy|stock|crypto)\b/.test(t);
   if (!tools.length && !url && !build && !personal) {
     const words = t.split(/\s+/).filter(Boolean).length;
     const live = /\b(today|tonight|yesterday|tomorrow|this (week|weekend|month|year)|right now|currently|current|latest|recent|newest|new|upcoming|202[4-9]|price|prices|cost|how much|who won|score|scores|how did|game (last night|tonight|today|yesterday)|release date|released|open now|hours|near me|stock|search|look up|google|out yet|is .+ out|when do|when are|when'?s|next game|play next|plays next|playing next|schedule|tonight'?s game|come out|comes out|coming out|release|drops?|launch(es|ing)?|premieres?|what day|what time|who is|who's|what is|what's|when is|when does|when did|where is|is .+ still|did .+ (die|win|lose)|ceo of|president|election|update|who (wrote|painted|invented|discovered|founded|directed|sang|created|built|made|starred|plays|played)|plot of|summary of|history of|biography|tell me about (?!yourself|you\b|me\b))\b/.test(t);
@@ -613,11 +613,13 @@ async function detectDevice() {
 }
 // speed/memory tuning for llama.cpp (overridable for testing via localStorage omega.tune)
 function brainTuning() { const t = store.get('tune', null); return t || { flash_attn: true }; } // flash attention: a little faster, less memory
+const ctxOf = m => m.vision ? 4096 : (m.ctx || CTX); // LFM2.5 uses very little memory per word, so it gets a much bigger window
+const ctxNow = () => engine && loadedKey ? ctxOf(modelOf(loadedKey)) : CTX;
 function visionKey() { return settings.vision || (!IS_PHONE && (navigator.hardwareConcurrency || 1) >= 4 ? 'vis-lfm2-1.6b' : 'vis-lfm2-450m'); }
 // how many processor cores the brain uses (only possible when the page is cross-origin isolated)
 function brainThreads() {
   const c = navigator.hardwareConcurrency || 1;
-  if (!window.crossOriginIsolated || c < 2) return 1;
+  if (!window.crossOriginIsolated || c < 2 || IS_IOS) return 1; // iPhone/iPad: single-core is the proven, stable mode
   return IS_PHONE ? Math.min(4, Math.max(2, c - 2)) : Math.min(8, Math.max(2, c - 1));
 }
 async function startCpuBrain(m, cb, saved) {
@@ -626,7 +628,7 @@ async function startCpuBrain(m, cb, saved) {
   const w = new Wllama({ default: WLLAMA_WASM }, { suppressNativeLog: true, allowOffline: true });
   // load straight from the file address (skips Hugging Face's file-list lookup, so a saved brain opens with no internet)
   await w.loadModelFromUrl({ url: `https://huggingface.co/${m.repo}/resolve/main/${m.file}`, ...(m.mmproj ? { mmprojUrl: `https://huggingface.co/${m.repo}/resolve/main/${m.mmproj}` } : {}) }, {
-    n_ctx: m.vision ? 4096 : CTX, n_gpu_layers: 0, n_batch: 512, n_threads: brainThreads(), ...brainTuning(),
+    n_ctx: ctxOf(m), n_gpu_layers: 0, n_batch: 512, n_threads: brainThreads(), ...brainTuning(),
     progressCallback: ({ loaded, total }) => cb({ progress: total ? loaded / total : 0, text: saved ? `Loading from this ${DEVICE}… ${total ? Math.round(loaded / total * 100) : 0}%` : total ? `Downloading ${Math.round(loaded / 1e6)} of ${Math.round(total / 1e6)} MB` : 'Downloading…' }),
   });
   cb({ progress: 1, text: 'Starting up…' });
@@ -638,6 +640,7 @@ async function startCpuBrain(m, cb, saved) {
       try {
         const it = await w.createChatCompletion({ messages, stream: true, max_tokens: o.maxTokens, temperature: o.temperature, top_p: o.think ? 0.95 : 0.9, repeat_penalty: o.think ? 1.05 : 1.12, repeat_last_n: 128, abortSignal: abort.signal, ...(m.thinking ? { chat_template_kwargs: { enable_thinking: !!o.think } } : {}) });
         let reason = '', text = '';
+        if (window.__omegaStallOnce) { window.__omegaStallOnce = false; await new Promise(r => abort.signal.addEventListener('abort', r)); } // test switch: simulate a frozen brain
         for await (const c of it) {
           const d = (c.choices && c.choices[0] && c.choices[0].delta) || {};
           reason += d.reasoning_content || ''; text += d.content || '';
@@ -732,14 +735,23 @@ function systemPrompt(codeMode, hasLive) {
     codeMode ? 'CODING MODE: write complete, working code in fenced code blocks with a language tag (```html, ```javascript, ```python). For a game, app, website or anything visual: reply with ONE short sentence, then ONE complete self-contained ```html file (all CSS and JavaScript inside it, no outside files or images). It is played on a phone: fill the screen, and make taps/touches work (touchstart) as well as clicks and keys. Keep it simple so it is finished and works. Do not explain the code after it. For plain scripts, JavaScript runs in a worker (use console.log).' : '',
   ].filter(Boolean).join('\n\n');
 }
-function historyFor(maxChars) {
+function historyFor(maxChars, keepCode) {
   const turns = (chat && chat.turns) || [];
-  const out = []; let used = 0;
-  for (let i = turns.length - 1; i >= 0; i--) {
-    const t = turns[i]; const c = clip(String(t.text || '').replace(/```[\s\S]*?(```|$)/g, '[code]'), 2500); used += c.length;
-    if (used > maxChars) break;
+  const out = []; let used = 0, i = turns.length - 1, codeKept = !keepCode;
+  for (; i >= 0; i--) {
+    const t = turns[i], raw = String(t.text || '');
+    let c;
+    // the most recent code stays whole (so "make it bigger" / "fix it" can work on it); older code is shortened to [code]
+    if (!codeKept && t.role !== 'user' && /```/.test(raw)) { c = raw.length <= maxChars * 0.8 ? raw : clip(raw, Math.floor(maxChars * 0.8)); codeKept = true; } // only the newest code, never an older one
+    else c = clip(raw.replace(/```[\s\S]*?(```|$)/g, '[code]'), 2500);
+    if (used + c.length > maxChars) break;
+    used += c.length;
     out.unshift({ role: t.role === 'user' ? 'user' : 'assistant', content: c });
   }
+  // long chat: remind the brain what came earlier (just the questions), so old topics aren't completely forgotten
+  const older = turns.slice(0, i + 1).filter(t => t.role === 'user').map(t => clip(String(t.text || '').replace(/\s+/g, ' '), 70));
+  if (older.length && out.length) out[0] = { role: out[0].role, content: (out[0].role === 'user' ? `(Earlier in this chat ${profile.name || 'the user'} asked about: ${older.slice(-12).join(' / ')})\n\n` : '') + out[0].content };
+  if (older.length && out.length && out[0].role !== 'user') out.unshift({ role: 'user', content: `(Earlier in this chat I asked about: ${older.slice(-12).join(' / ')})` }), out.splice(1, 0, { role: 'assistant', content: 'Got it.' });
   return out;
 }
 
@@ -1102,7 +1114,7 @@ async function send(opts = {}) {
         return;
       }
     }
-    if (/^(what'?s|whats|what is|do you know|do you remember|remember)\s+my name\b|^who am i\b/i.test(text) && profile.name) { turn.text = `Your name is ${profile.name}.`; render(ui.ans, turn.text); return; }
+    if (/^(what'?s|whats|what is|what was|what'?s|do you know|do you remember|remember|you remember|tell me)\s+my name\b|^who am i\b|\bwhat(?:'?s| is| was) my name\b/i.test(text) && profile.name) { turn.text = `Your name is ${profile.name}.`; render(ui.ans, turn.text); return; }
     const pic = att ? null : pictureRequest(text);
     if (pic) { await makePicture(pic, ui, turn); return; }
     const math = att ? null : quickMath(text);
@@ -1154,19 +1166,34 @@ async function send(opts = {}) {
     // answer
     const codeMode = $('#codeChip').getAttribute('aria-pressed') === 'true';
     const wantsApp = codeMode && /\b(app|calculator|website|web ?site|page|landing|game|tool|timer|stopwatch|to-?do|todo|tracker|form|quiz|clock|counter|converter|ui|dashboard|portfolio|menu|button)\b/i.test(text) && !/\b(python|script|terminal|command line|node|java|c\+\+|swift|sql)\b/i.test(text);
-    const userContent = (live ? 'LIVE INFO (fetched just now):\n' + clip(live, IS_PHONE ? 2400 : 5000) + '\n\n(Answer using the LIVE INFO above. It is real and current. If it lists headlines or results, summarize the most relevant ones, and prefer the newest dated item. If the LIVE INFO does not contain the exact answer (for example a time, score or date), say you could not find that exact detail and share what you did find. Never guess numbers, times or scores.)\n---\n' : '') + (att && attText(att) ? `Here is the file the user attached (${att.files.map(f => f.name).join(', ')}):\n-----\n${clip(attText(att), Math.max(1200, (CTX - 900) * 3))}\n-----\n\nUsing the file above, answer this: ` : '') + text + (wantsApp ? '\n\n(Make it as ONE complete, working ```html file with the CSS and JavaScript inside. No input() prompts. It must work on a phone screen.)' : '');
-    const hist = codeMode && IS_PHONE ? [] : historyFor(IS_PHONE ? (live ? 1200 : 2600) : (live ? 3500 : 6000));
+    const userContent = (live ? 'LIVE INFO (fetched just now):\n' + clip(live, IS_PHONE && ctxNow() < 8192 ? 2400 : 5000) + '\n\n(Answer using the LIVE INFO above. It is real and current. If it lists headlines or results, summarize the most relevant ones, and prefer the newest dated item. If the LIVE INFO does not contain the exact answer (for example a time, score or date), say you could not find that exact detail and share what you did find. Never guess numbers, times or scores.)\n---\n' : '') + (att && attText(att) ? `Here is the file the user attached (${att.files.map(f => f.name).join(', ')}):\n-----\n${clip(attText(att), Math.max(1200, (ctxNow() - 900) * 3))}\n-----\n\nUsing the file above, answer this: ` : '') + text + (wantsApp ? '\n\n(Make it as ONE complete, working ```html file with the CSS and JavaScript inside. No input() prompts. It must work on a phone screen.)' : '');
+    const win = ctxNow(), big = win >= 8192;
+    // keep the last code whole only when this is a change to it ("make it bigger"), not when asking for something new
+    const editsCode = codeMode && !/\b(a|an|another|new)\b[\w\s]{0,30}\b(app|game|calculator|website|site|page|tool|timer|script|program)\b/i.test(text) && /\b(it|its|it's|that|this|the|bigger|smaller|change|fix|add|remove|update|improve|instead|faster|slower|color|colour)\b/i.test(text);
+    const hist = historyFor(big ? (IS_PHONE ? (live ? 2000 : codeMode ? 6000 : 4000) : (live ? 7000 : 14000)) : IS_PHONE ? (live ? 1200 : codeMode ? 3000 : 2600) : (live ? 3500 : 6000), editsCode);
     if (hist.length) hist.pop(); // drop the current user turn (already added) — we send the enriched version
-    const messages = [{ role: 'system', content: systemPrompt(codeMode, !!live) }, ...hist, { role: 'user', content: userContent }];
+    // changing earlier code: give the small brain ONLY that code + the change, so it can't mix up which app it is
+    let editContent = null;
+    if (editsCode) {
+      const last = [...chat.turns].reverse().find(t => t.role !== 'user' && /```/.test(String(t.text || '')));
+      const m = last && String(last.text).match(/```(\w*)\n([\s\S]*?)(```|$)/);
+      if (m) editContent = `Here is my current code:\n\n\`\`\`${m[1] || 'html'}\n${clip(m[2], Math.floor(ctxNow() * 1.6))}\n\`\`\`\n\nChange it: ${text}\n\nGive back the WHOLE updated file in one code block, with the change made.`;
+    }
+    const messages = editContent ? [{ role: 'system', content: systemPrompt(codeMode, false) }, { role: 'user', content: editContent }] : [{ role: 'system', content: systemPrompt(codeMode, !!live) }, ...hist, { role: 'user', content: userContent }];
+    if (window.OMEGA) window.OMEGA.lastPrompt = messages; // for the test harness
     const promptTokens = Math.ceil(messages.reduce((n, x) => n + x.content.length, 0) / 3.2) + 40;
-    const want = IS_PHONE ? (codeMode ? 1400 : 500) : (codeMode ? 2000 : 800);
+    const want = big ? (codeMode ? 3000 : 900) : IS_PHONE ? (codeMode ? 1400 : 500) : (codeMode ? 2000 : 800);
     const think = thinkOn() && !!modelOf(loadedKey).thinking;
     if (thinkOn() && !think) messages[messages.length - 1].content += '\n\n(Think it through step by step first, then give the final answer clearly at the end.)';
     const t0 = Date.now();
     const creative = /\b(write|story|poem|haiku|joke|caption|lyrics|rap|song|script|name ideas|ideas|brainstorm|slogan|funny|creative|imagine)\b/i.test(text);
-    const opts = { think, temperature: think ? 0.6 : codeMode ? 0.3 : creative ? 0.8 : 0.35, maxTokens: Math.max(200, Math.min(think ? want * 3 : want, CTX - promptTokens - 64)), onText: out => { showThoughts(ui, out, t0); render(ui.ans, thinkStrip(out), true); toBottom(); } };
+    const opts = { think, temperature: think ? 0.6 : codeMode ? 0.3 : creative ? 0.8 : 0.35, maxTokens: Math.max(200, Math.min(think ? want * 3 : want, win - promptTokens - 64)), onText: out => { showThoughts(ui, out, t0); render(ui.ans, thinkStrip(out), true); toBottom(); } };
     render(ui.ans, '', true); toBottom(); // shows "Thinking…" until the first words arrive
-    const run = async msgs => { const raw = await engine.chat(msgs, opts); const th = thoughtsOf(raw); if (th) turn.think = clip(th, 6000); showThoughts(ui, raw, t0, true); return thinkStrip(raw).trim(); };
+    // watchdog: if the brain goes silent (no new words for a long time), stop it so OMEGA can restart it instead of hanging
+    let lastTick = Date.now(), gotWords = false, stalled = false, reloading = false;
+    const tick0 = opts.onText; opts.onText = out => { lastTick = Date.now(); gotWords = true; tick0(out); };
+    const dog = setInterval(() => { const quiet = Date.now() - lastTick; if (!stopFlag && !reloading && quiet > (window.__omegaDogMs || (gotWords ? 45000 : 150000))) { stalled = true; try { engine && engine.stop(); } catch (e) { } } }, 3000);
+    const run = async msgs => { lastTick = Date.now(); gotWords = false; stalled = false; const raw = await engine.chat(msgs, opts); if (stalled) throw new Error('brain stalled'); const th = thoughtsOf(raw); if (th) turn.think = clip(th, 6000); showThoughts(ui, raw, t0, true); return thinkStrip(raw).trim(); };
     setInflight({ model: loadedKey, t: Date.now(), what: 'answer' });
     try { turn.text = await run(messages); }
     catch (e) {
@@ -1183,8 +1210,17 @@ async function send(opts = {}) {
         turn.text = await run(messages.slice(0, 1).concat([{ role: 'user', content: clip(userContent, 2000) }]));
         ui.wt.textContent = `Switched to ${modelOf(loadedKey).name} to save memory`;
       } else if (/context|too long|exceed|prompt|n_ctx/i.test(String(e.message))) { turn.text = await run([messages[0], { role: 'user', content: clip(userContent, 1800) }]); }
+      else if (!stopFlag) {
+        // anything else (the brain stalled or errored): restart it and try once more with a shorter conversation
+        ui.work.hidden = false; ui.wt.textContent = 'The brain got stuck. Restarting it…'; window.__omegaDogMs = 0; reloading = true;
+        const key = loadedKey; await dropEngine();
+        await loadBrain(key, p => { lastTick = Date.now(); ui.wt.textContent = `Restarting the brain… ${Math.round((p.progress || 0) * 100)}%`; });
+        reloading = false; setInflight({ model: loadedKey, t: Date.now(), what: 'answer' });
+        turn.text = await run([messages[0], ...messages.slice(-5, -1), { role: 'user', content: userContent }].map(m => ({ role: m.role, content: clip(m.content, 3000) })));
+        ui.wt.textContent = 'Restarted the brain and answered';
+      }
       else throw e;
-    } finally { setInflight(null); }
+    } finally { setInflight(null); clearInterval(dog); }
     if (turn.text) store.set('crashes', null); // answered fine: reset the crash count
     // the small brain sometimes refuses or comes back empty even with good live info: show what was found instead
     if (liveShown && !stopFlag && (!turn.text || /^(i'?m sorry,? but )?i (can'?t|cannot|am unable to|'m unable to) (assist|help) with (that|this)\.?$/i.test(turn.text.trim()))) turn.text = "Here's what I found:\n\n" + liveShown;
@@ -1193,7 +1229,7 @@ async function send(opts = {}) {
     if (!live && !ui.wt.textContent.startsWith('Checked')) ui.work.hidden = true;
   } catch (e) {
     ui.ans.innerHTML = '';
-    const d = document.createElement('div'); d.className = 'err'; d.textContent = isGpuCrash(e) ? "OMEGA's brain crashed. Open Brain and settings and pick Qwen3 0.6B, then try again." : ((e && e.message) || String(e)); ui.ans.appendChild(d); if (isGpuCrash(e)) await dropEngine();
+    const d = document.createElement('div'); d.className = 'err'; d.textContent = /brain stalled/.test((e && e.message) || '') ? "The brain froze twice in a row. Tap New chat and ask again, it'll be fresh." : isGpuCrash(e) ? "OMEGA's brain crashed. Open Brain and settings and pick Qwen3 0.6B, then try again." : ((e && e.message) || String(e)); ui.ans.appendChild(d); if (isGpuCrash(e)) await dropEngine();
     ui.work.hidden = true;
     if (e && e.setup) {
       const b = document.createElement('button'); b.className = 'btn pri'; b.style.marginTop = '8px'; d.appendChild(document.createElement('br')); d.appendChild(b);
@@ -1375,7 +1411,8 @@ fillProfile(); renderFacts(); renderChats(); syncChips(); grow(); refreshWelcome
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   navigator.serviceWorker.register('sw.js').catch(() => { });
   // the multi-core brain needs the page to be served by the offline helper: reload once when it first takes over (never mid-answer)
-  if (!window.crossOriginIsolated && typeof SharedArrayBuffer === 'undefined') navigator.serviceWorker.ready.then(() => {
+  const multiCoreBrowser = /(Chrome|Chromium|Firefox)\//.test(navigator.userAgent) && !IS_IOS; // Safari stays single-core (more reliable there)
+  if (multiCoreBrowser && !window.crossOriginIsolated && typeof SharedArrayBuffer === 'undefined') navigator.serviceWorker.ready.then(() => {
     let tried = false; try { tried = !!sessionStorage.getItem('omega.coi'); sessionStorage.setItem('omega.coi', '1'); } catch (e) { tried = true; }
     if (tried) return;
     const go = () => { if (!busy && !loading && !engine) location.reload(); };

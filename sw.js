@@ -1,6 +1,6 @@
 // Offline support: keeps OMEGA's app files and the brain engine (wllama) on the device.
 // The brain itself is saved by wllama in the browser's private file storage.
-const CACHE = 'omega-shell-v26';
+const CACHE = 'omega-shell-v27';
 const ENGINE = 'omega-engine-v1';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'games.js', 'play.html', 'worker.js', 'manifest.webmanifest', 'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
 // 'reload' skips the browser's 10-minute cache, so the saved copy is always the newest version
@@ -8,8 +8,11 @@ self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c =>
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => (k.startsWith('omega-shell-') && k !== CACHE) || (k.startsWith('omega-engine-') && k !== ENGINE)).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 // Multi-core brain: these headers make the page "cross-origin isolated", which lets the brain use several processor cores.
 // Chrome/Firefox get 'credentialless' (outside images still load in apps); Safari gets 'require-corp'.
-const COEP = /(Chrome|Chromium|Firefox)\//.test(self.navigator.userAgent) && !/CriOS|FxiOS|EdgiOS/.test(self.navigator.userAgent) ? 'credentialless' : 'require-corp';
+// Safari (iPhone/iPad/Mac) is left alone: its multi-core support is unreliable, and the single-core mode is proven there.
+const CHROMIUM_OR_FIREFOX = /(Chrome|Chromium|Firefox)\//.test(self.navigator.userAgent) && !/CriOS|FxiOS|EdgiOS|iPhone|iPad/.test(self.navigator.userAgent);
+const COEP = 'credentialless';
 function isolate(resp, url) {
+  if (!CHROMIUM_OR_FIREFOX) return resp;
   if (!resp || resp.status === 0 || resp.type === 'opaque' || resp.type === 'opaqueredirect' || url.pathname.endsWith('/play.html')) return resp; // play links stay normal pages
   const h = new Headers(resp.headers);
   h.set('Cross-Origin-Embedder-Policy', COEP); h.set('Cross-Origin-Opener-Policy', 'same-origin'); h.set('Cross-Origin-Resource-Policy', 'same-origin');
