@@ -1,6 +1,6 @@
 // Offline support: keeps OMEGA's app files and the brain engine (wllama) on the device.
 // The brain itself is saved by wllama in the browser's private file storage.
-const CACHE = 'omega-shell-v12';
+const CACHE = 'omega-shell-v13';
 const ENGINE = 'omega-engine-v1';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'worker.js', 'manifest.webmanifest', 'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
@@ -15,5 +15,5 @@ self.addEventListener('fetch', e => {
   }
   if (u.origin !== location.origin) return; // never touch model downloads or live-info calls
   // app files: try the network first (to get updates), fall back to the saved copy when offline
-  e.respondWith(fetch(e.request).then(r => { const copy = r.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); return r; }).catch(() => caches.match(e.request).then(r => r || caches.match('index.html'))));
+  e.respondWith(fetch(e.request, { cache: 'no-cache' }).then(r => { const copy = r.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); return r; }).catch(() => caches.match(e.request, { ignoreSearch: true }).then(r => r || caches.match('index.html'))));
 });

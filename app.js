@@ -321,7 +321,9 @@ function decideTools(text) {
   if (/\b(bitcoin|btc|ethereum|eth|crypto|solana|dogecoin|doge|xrp|cardano|litecoin|shiba|pepe)\b/.test(t) && /\b(price|worth|cost|how much|value|at|today|now|up|down)\b/.test(t)) tools.push(['crypto', () => toolCrypto(text)]);
   if (currencyPair(text)) tools.push(['currency', () => toolCurrency(text)]);
   if (/\b(news|headlines?|what'?s happening|what happened)\b/.test(t)) tools.push(['news', () => toolNews(text)]);
-  if (!tools.length && !url) {
+  // asking OMEGA to make/build/write something: answer with its own work, don't search the web (unless asked to search)
+  const build = /\b(make|build|write|create|code|program|generate|design|draw|develop)\b/.test(t) && !/\b(search|look up|google|news|latest|price)\b/.test(t);
+  if (!tools.length && !url && !build) {
     const words = t.split(/\s+/).filter(Boolean).length;
     const live = /\b(today|tonight|yesterday|tomorrow|this (week|weekend|month|year)|right now|currently|current|latest|recent|newest|new|upcoming|202[4-9]|price|prices|cost|how much|who won|score|scores|game|release date|released|open now|hours|near me|stock|search|look up|google|who is|who's|what is|what's|when is|when does|when did|where is|is .+ still|did .+ (die|win|lose)|ceo of|president|election|update)\b/.test(t);
     const casual = /^(hi|hey|yo|sup|wassup|thanks|thank you|ok|okay|lol|lmao|bet|cool|nice|good (morning|night|afternoon))\b/.test(t) && words <= 5;
