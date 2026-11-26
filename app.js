@@ -7,16 +7,23 @@ const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.89';
 const WLLAMA_URL = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/index.js';
 const WLLAMA_WASM = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/wasm/wllama.wasm';
 const PROXY = 'https://proxy.cors.dev/';
-const VERSION = '2.4.0';
+const VERSION = '3.0.0';
 
 const MODELS = [
   { key: 'cpu-qwen3-0.6b', engine: 'cpu', name: 'Qwen3 0.6B', repo: 'unsloth/Qwen3-0.6B-GGUF', file: 'Qwen3-0.6B-Q4_K_M.gguf', sizeMB: 400, memMB: 650, thinking: true, desc: 'Recommended for phones and tablets. Runs on the processor, so it does not crash.' },
   { key: 'cpu-llama-1b', engine: 'cpu', name: 'Llama 3.2 1B', repo: 'unsloth/Llama-3.2-1B-Instruct-GGUF', file: 'Llama-3.2-1B-Instruct-Q4_K_M.gguf', sizeMB: 810, memMB: 1050, desc: 'Smarter, more natural chat. A little slower.' },
+  { key: 'cpu-qwen3-1.7b', engine: 'cpu', name: 'Qwen3 1.7B', repo: 'unsloth/Qwen3-1.7B-GGUF', file: 'Qwen3-1.7B-Q4_K_M.gguf', sizeMB: 1110, memMB: 1400, thinking: true, experimentalIOS: true, desc: 'Much smarter. Great on computers and strong phones. On iPhone it is experimental: if it runs out of memory, OMEGA goes back to your smaller brain.' },
+  { key: 'cpu-qwen3-4b', engine: 'cpu', name: 'Qwen3 4B', repo: 'unsloth/Qwen3-4B-Instruct-2507-GGUF', file: 'Qwen3-4B-Instruct-2507-Q4_K_M.gguf', sizeMB: 2500, memMB: 3200, desc: 'Smartest processor brain. For computers with 8+ cores and plenty of memory.' },
   { key: 'cpu-qwen2.5-0.5b', engine: 'cpu', name: 'Qwen2.5 0.5B', repo: 'Qwen/Qwen2.5-0.5B-Instruct-GGUF', file: 'qwen2.5-0.5b-instruct-q4_k_m.gguf', sizeMB: 490, memMB: 700, desc: 'Backup brain.' },
   { key: 'gpu-qwen3-1.7b', engine: 'gpu', name: 'Qwen3 1.7B (fast mode)', f16: 'Qwen3-1.7B-q4f16_1-MLC', f32: 'Qwen3-1.7B-q4f32_1-MLC', sizeMB: 1100, memMB: 2040, thinking: true, desc: 'Uses the graphics chip. Fast and smart on computers.' },
   { key: 'gpu-llama-3b', engine: 'gpu', name: 'Llama 3.2 3B (fast mode)', f16: 'Llama-3.2-3B-Instruct-q4f16_1-MLC', f32: 'Llama-3.2-3B-Instruct-q4f32_1-MLC', sizeMB: 1800, memMB: 2260, desc: 'Graphics chip. Very natural conversation.' },
   { key: 'gpu-coder-3b', engine: 'gpu', name: 'Qwen2.5 Coder 3B (fast mode)', f16: 'Qwen2.5-Coder-3B-Instruct-q4f16_1-MLC', f32: 'Qwen2.5-Coder-3B-Instruct-q4f32_1-MLC', sizeMB: 1800, memMB: 2500, desc: 'Graphics chip. Best for code.' },
   { key: 'gpu-qwen3-4b', engine: 'gpu', name: 'Qwen3 4B (fast mode)', f16: 'Qwen3-4B-q4f16_1-MLC', f32: 'Qwen3-4B-q4f32_1-MLC', sizeMB: 2300, memMB: 3430, thinking: true, desc: 'Graphics chip. Smartest; needs a good computer.' },
+];
+// vision brains ("eyes"): see photos and videos. Loaded only when you attach one.
+const VISION = [
+  { key: 'vis-lfm2-450m', engine: 'cpu', vision: true, name: 'LFM2-VL 450M (vision)', repo: 'LiquidAI/LFM2-VL-450M-GGUF', file: 'LFM2-VL-450M-Q8_0.gguf', mmproj: 'mmproj-LFM2-VL-450M-Q8_0.gguf', sizeMB: 483, memMB: 900, desc: 'Sees photos and videos. Light enough for phones.' },
+  { key: 'vis-lfm2-1.6b', engine: 'cpu', vision: true, name: 'LFM2-VL 1.6B (vision)', repo: 'LiquidAI/LFM2-VL-1.6B-GGUF', file: 'LFM2-VL-1.6B-Q4_0.gguf', mmproj: 'mmproj-LFM2-VL-1.6B-Q8_0.gguf', sizeMB: 1260, memMB: 2200, desc: 'Sharper eyes for computers.' },
 ];
 const IS_IOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
 const IS_PHONE = IS_IOS || /Android/i.test(navigator.userAgent);
@@ -27,9 +34,11 @@ const CTX = IS_PHONE ? 2048 : 4096; // smaller working memory on phones = far le
 const PHONE_DEFAULT = 'cpu-qwen3-0.6b';
 const DESKTOP_DEFAULT = 'gpu-qwen3-1.7b';
 // iPhone: processor brains only (Safari kills tabs over ~1.5 GB and its graphics process crashes easily)
-const fitsDevice = m => !IS_IOS || (m.engine === 'cpu' && m.memMB <= 1100);
+const fitsDevice = m => !IS_IOS || (m.engine === 'cpu' && (m.memMB <= 1100 || m.experimentalIOS));
 // if a brain crashes or cannot start, OMEGA moves down this list
-const LIGHTER = { 'gpu-qwen3-4b': 'gpu-qwen3-1.7b', 'gpu-llama-3b': 'gpu-qwen3-1.7b', 'gpu-coder-3b': 'gpu-qwen3-1.7b', 'gpu-qwen3-1.7b': 'cpu-llama-1b', 'cpu-llama-1b': 'cpu-qwen3-0.6b', 'cpu-qwen3-0.6b': 'cpu-qwen2.5-0.5b' };
+const LIGHTER = { 'gpu-qwen3-4b': 'gpu-qwen3-1.7b', 'gpu-llama-3b': 'gpu-qwen3-1.7b', 'gpu-coder-3b': 'gpu-qwen3-1.7b', 'gpu-qwen3-1.7b': 'cpu-qwen3-1.7b', 'cpu-qwen3-4b': 'cpu-qwen3-1.7b', 'cpu-qwen3-1.7b': 'cpu-qwen3-0.6b', 'cpu-llama-1b': 'cpu-qwen3-0.6b', 'cpu-qwen3-0.6b': 'cpu-qwen2.5-0.5b' };
+// how smart each brain is (for "a better brain is available" suggestions)
+const RANK = { 'cpu-qwen2.5-0.5b': 1, 'cpu-qwen3-0.6b': 2, 'cpu-llama-1b': 3, 'cpu-qwen3-1.7b': 4, 'gpu-qwen3-1.7b': 5, 'gpu-llama-3b': 5, 'gpu-coder-3b': 5, 'cpu-qwen3-4b': 6, 'gpu-qwen3-4b': 7 };
 const isGpuCrash = e => /device (was )?lost|disposed|external instance|mapAsync|GPUDevice|out of memory|OOM|allocation|WebGPU|Instance reference|graphics adapter|memory access out of bounds|RuntimeError|Aborted\(/i.test(String((e && e.message) || e));
 
 // ---------------- small helpers ----------------
@@ -48,7 +57,8 @@ let facts = store.get('facts', []);
 let lessons = store.get('lessons', []);
 let liked = store.get('liked', []);
 let chats = store.get('chats', []);
-let settings = store.get('settings', { model: IS_PHONE ? PHONE_DEFAULT : DESKTOP_DEFAULT, live: true });
+let settings = store.get('settings', { model: IS_PHONE ? PHONE_DEFAULT : DESKTOP_DEFAULT, live: true, auto: true, fresh: true });
+if (settings.auto === undefined) settings.auto = true;
 if (!MODELS.some(m => m.key === settings.model)) settings.model = IS_PHONE ? PHONE_DEFAULT : DESKTOP_DEFAULT; // upgrade from older versions
 if (!fitsDevice(MODELS.find(m => m.key === settings.model))) settings.model = PHONE_DEFAULT;
 let crashNote = '';
@@ -78,7 +88,10 @@ async function pickSavedBrain() {
     crashFrom = null; store.set('settings', settings);
   }
   if (await isCached(modelOf(settings.model)).catch(() => false)) return;
-  for (const m of MODELS) if (fitsDevice(m) && await isCached(m).catch(() => false)) { settings.model = m.key; store.set('settings', settings); return; }
+  const order = MODELS.filter(fitsDevice).sort((a, b) => (a.engine === 'cpu' ? 0 : 1) - (b.engine === 'cpu' ? 0 : 1) || (RANK[b.key] || 0) - (RANK[a.key] || 0));
+  for (const m of order) if (await isCached(m).catch(() => false)) { settings.model = m.key; store.set('settings', settings); return; }
+  // nothing downloaded yet: suggest the best brain for this device
+  if (settings.auto) { const d = await detectDevice(); if (d.rec !== settings.model) { settings.model = d.rec; store.set('settings', settings); } }
 }
 let chat = null, busy = false, stopFlag = false;
 let webllm = null, wllamaMod = null, engine = null, loadedKey = null, loading = null, hasF16 = null;
@@ -86,16 +99,27 @@ const codes = {}; let seq = 0;
 
 // ---------------- markdown + code blocks ----------------
 function inline(t) {
-  return esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`\n]+)`/g, '<code>$1</code>')
-    .replace(/\[([^\]]+)\]\((https:\/\/[^)\s]+)\)/g, (m, a, u) => `<a href="${u}" target="_blank" rel="noopener">${a}</a>`);
+  return esc(t).replace(/`([^`\n]+)`/g, '<code>$1</code>').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/(^|[\s(])\*([^*\s][^*]*?)\*(?=[\s.,!?)]|$)/g, '$1<i>$2</i>').replace(/(^|[\s(])_([^_\s][^_]*?)_(?=[\s.,!?)]|$)/g, '$1<i>$2</i>')
+    .replace(/\[([^\]]+)\]\((https:\/\/[^)\s]+)\)/g, (m, a, u) => `<a href="${u}" target="_blank" rel="noopener">${a}</a>`)
+    .replace(/(^|[\s(])(https:\/\/[^\s<)"]+[^\s<)".,!?])/g, (m, pre, u) => `${pre}<a href="${u}" target="_blank" rel="noopener">${u.replace(/^https:\/\/(www\.)?/, '').slice(0, 48)}</a>`);
 }
+const cells = l => l.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
 function mdBlock(t) {
   let h = '', list = null, para = [];
   const flushP = () => { if (para.length) { h += '<p>' + para.map(inline).join('<br>') + '</p>'; para = []; } };
   const flushL = () => { if (list) { h += `<${list.t}>` + list.items.map(x => '<li>' + inline(x) + '</li>').join('') + `</${list.t}>`; list = null; } };
-  for (const raw of t.split('\n')) {
-    const l = raw.trimEnd(); let m;
+  const lines = t.split('\n');
+  for (let li = 0; li < lines.length; li++) {
+    const raw = lines[li]; const l = raw.trimEnd(); let m;
     if (!l.trim()) { flushP(); flushL(); continue; }
+    if ((m = l.match(/^\s*!\[([^\]]*)\]\((https:\/\/image\.pollinations\.ai\/[^)\s]+)\)\s*$/))) { flushP(); flushL(); h += `<div class="genimg" data-src="${esc(m[2])}" data-alt="${esc(m[1])}"><div class="ph"><span class="spinner"></span> Making your picture…</div></div>`; continue; }
+    if (/^\s*\|.*\|\s*$/.test(l) && li + 1 < lines.length && /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(lines[li + 1])) {
+      flushP(); flushL(); const head = cells(l); li += 2; const rows = [];
+      while (li < lines.length && /^\s*\|.*\|\s*$/.test(lines[li])) rows.push(cells(lines[li++]));
+      li--; h += `<div class="tablewrap"><table><thead><tr>${head.map(c => '<th>' + inline(c) + '</th>').join('')}</tr></thead><tbody>${rows.map(r => '<tr>' + r.map(c => '<td>' + inline(c) + '</td>').join('') + '</tr>').join('')}</tbody></table></div>`; continue;
+    }
+    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(l)) { flushP(); flushL(); h += '<hr>'; continue; }
+    if ((m = l.match(/^\s*>\s?(.*)/))) { flushP(); flushL(); h += '<blockquote>' + inline(m[1]) + '</blockquote>'; continue; }
     if ((m = l.match(/^#{1,6}\s+(.*)/))) { flushP(); flushL(); h += '<h3>' + inline(m[1]) + '</h3>'; continue; }
     if ((m = l.match(/^\s*[-*•]\s+(.*)/))) { flushP(); if (!list || list.t !== 'ul') { flushL(); list = { t: 'ul', items: [] }; } list.items.push(m[1]); continue; }
     if ((m = l.match(/^\s*\d+[.)]\s+(.*)/))) { flushP(); if (!list || list.t !== 'ol') { flushL(); list = { t: 'ol', items: [] }; } list.items.push(m[1]); continue; }
@@ -135,6 +159,7 @@ function render(el, text, live) {
   }
   if (live && !h.trim()) h = '<div class="thinking">Thinking<span class="dots"></span></div>';
   el.innerHTML = h;
+  if (!live) hydratePics(el);
 }
 // a real link to the app: the code is packed (compressed) into the address of play.html
 const linkCache = new Map();
@@ -449,6 +474,49 @@ function isClockQuestion(t) {
   return /\b(what time is it|what'?s the time|whats the time|what is the time|what time it is|time is it|current time|time right now|what'?s the time now|what day is it|what day is today|what'?s today'?s date|what is today'?s date|what'?s the date|whats the date|what is the date|today'?s date|date today|what date is it|what'?s today|what is today|what year is it|what month is it)\b/.test(t)
     || /^(what time|time|clock|current time|local time|what'?s the time) (in|at) [a-z]/.test(t) || /^(what time|the time|time)$/.test(t);
 }
+// ---------------- pictures (free online image maker, Pollinations) ----------------
+function pictureRequest(text) {
+  const t = text.trim();
+  if (!/\b(draw|paint|sketch|illustrate|picture|image|photo|pic|wallpaper|logo|drawing|artwork|poster)\b/i.test(t)) return null;
+  if (!/^(?:yo |hey |bro |omega |ok |please )*(?:can you |could you |please |i want you to |i want |i need )?(?:make|create|generate|draw|paint|sketch|design|give|show|illustrate|do)\b|^(?:a |an )?(?:picture|image|photo|drawing|wallpaper|logo|poster) of\b|^draw\b/i.test(t)) return null;
+  if (/\b(code|html|website|app|game|svg|css|python|javascript)\b/i.test(t)) return null;
+  const d = t.replace(/^(?:yo |hey |bro |omega |ok |please )*(?:can you |could you |please |i want you to |i want |i need )?(?:make|create|generate|draw|paint|sketch|design|give|show|illustrate|do)(?: me| us)?\s*/i, '')
+    .replace(/^(?:a |an |some )?(?:picture|image|photo|pic|drawing|painting|sketch|illustration|artwork|wallpaper|poster)s?\s*(?:of|showing|with)?\s*/i, '').replace(/[?!.]+$/, '').trim();
+  return d.length >= 2 ? d : null;
+}
+const BLOCKED_PIC = /\b(nude|naked|nsfw|porn|sex|sexy|explicit|lingerie|gore|blood|dead body|kill|child|kid|minor|teen)\b/i;
+const picCache = new Map();
+async function picBlob(url) {
+  if (picCache.has(url)) return picCache.get(url);
+  for (let i = 0; i < 4; i++) {
+    try {
+      const c = new AbortController(), t = setTimeout(() => c.abort(), 90000);
+      const r = await fetch(url, { signal: c.signal }).finally(() => clearTimeout(t));
+      if (r.ok && /^image\//.test(r.headers.get('content-type') || '')) { const u = URL.createObjectURL(await r.blob()); picCache.set(url, u); return u; }
+      if (r.status !== 503 && r.status !== 429 && r.status < 500) throw new Error('HTTP ' + r.status);
+    } catch (e) { if (i === 3 || /HTTP 4/.test(e.message)) throw e; }
+    await sleep(10000); // the free service is busy: wait and try again
+  }
+  throw new Error('the picture service is busy');
+}
+async function makePicture(desc, ui, turn) {
+  if (BLOCKED_PIC.test(desc)) { turn.text = "I can't make that kind of picture. Try something else, like a car, a city at night, or a logo idea."; render(ui.ans, turn.text); return; }
+  if (navigator.onLine === false) { turn.text = 'Making pictures needs the internet. Connect and ask again.'; render(ui.ans, turn.text); return; }
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(desc.slice(0, 300))}?width=768&height=768&nologo=true&safe=true&seed=${Math.floor(Math.random() * 1e9)}`;
+  ui.work.hidden = false; ui.wt.textContent = 'Making your picture… (the free image service can take up to a minute)';
+  turn.text = `Here's your picture: **${desc}**\n\n![${desc.replace(/[\[\]]/g, '')}](${url})`;
+  render(ui.ans, turn.text); toBottom();
+  try { await picBlob(url); ui.wt.textContent = 'Made with Pollinations (free online image service)'; hydratePics(ui.ans); turn.sources.push({ title: 'Pollinations', url: 'https://pollinations.ai/' }); }
+  catch (e) { ui.work.hidden = true; turn.text = `I couldn't make the picture right now (${e.message}). The free image service is busy. Tap ↻ to try again in a minute.`; render(ui.ans, turn.text); }
+}
+// pictures are fetched (not linked) so they also work in the multi-core page mode
+function hydratePics(root) {
+  root.querySelectorAll('.genimg:not([data-done])').forEach(g => {
+    g.dataset.done = '1';
+    picBlob(g.dataset.src).then(u => { g.innerHTML = `<img src="${u}" alt="${esc(g.dataset.alt)}"><div class="picbtns"><a class="btn" href="${u}" download="omega-picture.jpg">⤓ Save</a></div>`; })
+      .catch(() => { g.innerHTML = '<div class="ph">The picture could not load. Tap ↻ to make a new one.</div>'; });
+  });
+}
 // exact math for simple calculations ("what's 15% of 240", "347 times 29", "(12+8)/4")
 function quickMath(text) {
   let t = text.toLowerCase().replace(/,(?=\d{3})/g, '').replace(/[?!=]+/g, ' ').trim();
@@ -489,7 +557,7 @@ function decideTools(text) {
 }
 
 // ---------------- brain ----------------
-const modelOf = key => MODELS.find(m => m.key === key) || MODELS[0];
+const modelOf = key => MODELS.find(m => m.key === key) || VISION.find(m => m.key === key) || MODELS[0];
 async function gpuCheck() {
   if (!('gpu' in navigator) || !navigator.gpu) return { ok: false, why: 'No WebGPU in this browser.' };
   try {
@@ -505,20 +573,46 @@ async function getWllama() { if (!wllamaMod) wllamaMod = await import(WLLAMA_URL
 function modelId(m) { return hasF16 === false ? m.f32 : m.f16; }
 async function isCached(m) {
   try {
-    if (m.engine === 'cpu') { const { Wllama } = await getWllama(); const w = new Wllama({ default: WLLAMA_WASM }, { suppressNativeLog: true, allowOffline: true }); const list = await w.cacheManager.list(); return list.some(e => (e.metadata && e.metadata.originalURL || e.name || '').includes(m.file)); }
+    if (m.engine === 'cpu') { const { Wllama } = await getWllama(); const w = new Wllama({ default: WLLAMA_WASM }, { suppressNativeLog: true, allowOffline: true }); const list = await w.cacheManager.list(); const has = f => list.some(e => (e.metadata && e.metadata.originalURL || e.name || '').includes(f)); return has(m.file) && (!m.mmproj || has(m.mmproj)); }
     const g = await gpuCheck(); if (!g.ok) return false; const w = await getWebLLM(); return await w.hasModelInCache(modelId(m));
   } catch (e) { return false; }
 }
 function setStatus(t) { const s = $('#brainStatus'); s.textContent = t || ''; s.hidden = !t; }
 
 // Each engine is wrapped in the same small interface: chat(), stop(), unload()
+// ---------------- device detection: pick the best brain and settings for this phone / tablet / computer ----------------
+let deviceCache = null;
+const sizeText = mb => mb >= 1000 ? (mb / 1000).toFixed(1) + ' GB' : mb + ' MB';
+const kindWord = k => k === 'Computer' ? 'computer' : k.replace(/^Android /, 'Android ');
+async function detectDevice() {
+  if (deviceCache) return deviceCache;
+  const cores = navigator.hardwareConcurrency || 1, memGB = navigator.deviceMemory || null;
+  const kind = IS_IPAD ? 'iPad' : IS_IOS ? 'iPhone' : /Android/i.test(navigator.userAgent) ? (/Mobile/i.test(navigator.userAgent) ? 'Android phone' : 'Android tablet') : 'Computer';
+  const gpu = IS_IOS ? { ok: false, why: 'Not used on iPhone/iPad (Safari would crash)' } : await gpuCheck();
+  let rec, why;
+  if (IS_IOS) { rec = 'cpu-qwen3-0.6b'; why = `Safari limits how much memory a page can use on ${kind}, so the light, fast brain is the safe choice.`; }
+  else if (IS_PHONE) { rec = memGB && memGB >= 8 && cores >= 8 ? 'cpu-qwen3-1.7b' : 'cpu-qwen3-0.6b'; why = rec === 'cpu-qwen3-1.7b' ? 'This phone has lots of memory and cores, so it can run the smarter brain.' : 'The light, fast brain fits this phone best.'; }
+  else if (gpu.ok) { rec = 'gpu-qwen3-1.7b'; why = 'This computer has a graphics chip, so fast mode makes answers much quicker.'; }
+  else { rec = cores >= 4 ? 'cpu-qwen3-1.7b' : 'cpu-qwen3-0.6b'; why = cores >= 4 ? `No graphics chip available, but ${cores} processor cores can run the smarter brain.` : 'A light brain fits this computer best.'; }
+  deviceCache = { kind, cores, memGB, gpu, rec, why };
+  return deviceCache;
+}
+// speed/memory tuning for llama.cpp (overridable for testing via localStorage omega.tune)
+function brainTuning() { const t = store.get('tune', null); return t || { flash_attn: true }; } // flash attention: a little faster, less memory
+function visionKey() { return settings.vision || (!IS_PHONE && (navigator.hardwareConcurrency || 1) >= 4 ? 'vis-lfm2-1.6b' : 'vis-lfm2-450m'); }
+// how many processor cores the brain uses (only possible when the page is cross-origin isolated)
+function brainThreads() {
+  const c = navigator.hardwareConcurrency || 1;
+  if (!window.crossOriginIsolated || c < 2) return 1;
+  return IS_PHONE ? Math.min(4, Math.max(2, c - 2)) : Math.min(8, Math.max(2, c - 1));
+}
 async function startCpuBrain(m, cb, saved) {
   if (!wasmCheck()) throw new Error('This browser cannot run WebAssembly.');
   const { Wllama } = await getWllama();
   const w = new Wllama({ default: WLLAMA_WASM }, { suppressNativeLog: true, allowOffline: true });
   // load straight from the file address (skips Hugging Face's file-list lookup, so a saved brain opens with no internet)
-  await w.loadModelFromUrl({ url: `https://huggingface.co/${m.repo}/resolve/main/${m.file}` }, {
-    n_ctx: CTX, n_gpu_layers: 0, n_batch: 512,
+  await w.loadModelFromUrl({ url: `https://huggingface.co/${m.repo}/resolve/main/${m.file}`, ...(m.mmproj ? { mmprojUrl: `https://huggingface.co/${m.repo}/resolve/main/${m.mmproj}` } : {}) }, {
+    n_ctx: m.vision ? 4096 : CTX, n_gpu_layers: 0, n_batch: 512, n_threads: brainThreads(), ...brainTuning(),
     progressCallback: ({ loaded, total }) => cb({ progress: total ? loaded / total : 0, text: saved ? `Loading from this ${DEVICE}… ${total ? Math.round(loaded / total * 100) : 0}%` : total ? `Downloading ${Math.round(loaded / 1e6)} of ${Math.round(total / 1e6)} MB` : 'Downloading…' }),
   });
   cb({ progress: 1, text: 'Starting up…' });
@@ -528,8 +622,14 @@ async function startCpuBrain(m, cb, saved) {
     async chat(messages, o) {
       abort = new AbortController(); let out = '';
       try {
-        const it = await w.createChatCompletion({ messages, stream: true, max_tokens: o.maxTokens, temperature: o.temperature, top_p: 0.9, repeat_penalty: 1.12, repeat_last_n: 128, abortSignal: abort.signal, ...(m.thinking ? { chat_template_kwargs: { enable_thinking: false } } : {}) });
-        for await (const c of it) { out += (c.choices && c.choices[0] && c.choices[0].delta && c.choices[0].delta.content) || ''; o.onText(out); if (stopFlag) { abort.abort(); break; } }
+        const it = await w.createChatCompletion({ messages, stream: true, max_tokens: o.maxTokens, temperature: o.temperature, top_p: o.think ? 0.95 : 0.9, repeat_penalty: o.think ? 1.05 : 1.12, repeat_last_n: 128, abortSignal: abort.signal, ...(m.thinking ? { chat_template_kwargs: { enable_thinking: !!o.think } } : {}) });
+        let reason = '', text = '';
+        for await (const c of it) {
+          const d = (c.choices && c.choices[0] && c.choices[0].delta) || {};
+          reason += d.reasoning_content || ''; text += d.content || '';
+          out = reason ? '<think>' + reason + (text ? '</think>' : '') + text : text; // keep thoughts and answer apart
+          o.onText(out); if (stopFlag) { abort.abort(); break; }
+        }
       } catch (e) { if (!(abort.signal.aborted || /abort/i.test(String(e && (e.name || e.message))))) throw e; }
       return out;
     },
@@ -547,7 +647,7 @@ async function startGpuBrain(m, cb) {
     kind: 'gpu',
     async chat(messages, o) {
       let out = '';
-      const stream = await e.chat.completions.create({ messages, stream: true, temperature: o.temperature, top_p: 0.9, max_tokens: o.maxTokens, ...(m.thinking ? { extra_body: { enable_thinking: false } } : {}) });
+      const stream = await e.chat.completions.create({ messages, stream: true, temperature: o.temperature, top_p: 0.9, max_tokens: o.maxTokens, ...(m.thinking ? { extra_body: { enable_thinking: !!o.think } } : {}) });
       for await (const ch of stream) { out += (ch.choices && ch.choices[0] && ch.choices[0].delta && ch.choices[0].delta.content) || ''; o.onText(out); if (stopFlag) break; }
       return out;
     },
@@ -570,14 +670,14 @@ function loadBrain(key, onProgress) {
       try {
         if (engine) { await engine.unload(); engine = null; loadedKey = null; }
         engine = m.engine === 'cpu' ? await startCpuBrain(m, cb, !downloading || tries > 0 && await isCached(m).catch(() => false)) : await startGpuBrain(m, cb);
-        loadedKey = key; settings.model = key; store.set('settings', settings); setInflight(null);
+        loadedKey = key; if (!m.vision) { settings.model = key; store.set('settings', settings); } setInflight(null);
         try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) { }
         setStatus(''); refreshWelcome();
         return engine;
       } catch (err) {
         setInflight(null); engine = null; loadedKey = null;
         // graphics chip missing/crashed, or out of memory: fall back to a lighter brain automatically
-        const next = LIGHTER[key] || (m.engine === 'gpu' ? (IS_PHONE ? PHONE_DEFAULT : 'cpu-llama-1b') : null);
+        const next = m.vision ? null : LIGHTER[key] || (m.engine === 'gpu' ? (IS_PHONE ? PHONE_DEFAULT : 'cpu-llama-1b') : null);
         const nextOk = next && (downloading || await isCached(modelOf(next)).catch(() => false)); // never start a surprise download
         if (nextOk && tries < 4 && (isGpuCrash(err) || m.engine === 'gpu')) { tries++; key = next; onProgress && onProgress({ progress: 0, text: `${m.name} couldn't start here, switching to ${modelOf(next).name}…` }, modelOf(next)); continue; }
         throw err;
@@ -588,6 +688,16 @@ function loadBrain(key, onProgress) {
   return loading;
 }
 async function dropEngine() { const e = engine; engine = null; loadedKey = null; try { e && await e.unload(); } catch (_) { } }
+const thoughtsOf = t => { const m = String(t).match(/<think>([\s\S]*?)(?:<\/think>|$)/); return m ? m[1].trim() : ''; };
+const thinkOn = () => $('#thinkChip') && $('#thinkChip').getAttribute('aria-pressed') === 'true';
+function showThoughts(ui, out, t0, done) {
+  const th = thoughtsOf(out); if (!th) return;
+  const finished = done || /<\/think>/.test(out), secs = Math.max(1, Math.round((Date.now() - t0) / 1000));
+  if (!ui.think.dataset.secs && finished) ui.think.dataset.secs = secs;
+  ui.think.hidden = false;
+  ui.think.innerHTML = finished ? `<details><summary>💡 Thought for ${ui.think.dataset.secs || secs}s</summary><div class="tbody"></div></details>` : `<div class="thinking">💡 Thinking<span class="dots"></span> <span class="hint">${th.split(/\s+/).length} words</span></div>`;
+  const b = ui.think.querySelector('.tbody'); if (b) b.textContent = th;
+}
 const thinkStrip = t => t.replace(/<think>[\s\S]*?<\/think>\s*/g, '').replace(/<think>[\s\S]*$/, '');
 
 // ---------------- prompt ----------------
@@ -645,17 +755,29 @@ async function refreshWelcome() {
     const m = modelOf(settings.model);
     const cached = await isCached(m);
     const lighter = (() => { let k = LIGHTER[m.key]; while (k && !fitsDevice(modelOf(k))) k = LIGHTER[k]; return k ? modelOf(k) : null; })();
-    if (crashBlocked && !loading) setup = `<div class="setup"><h2>OMEGA's brain crashed twice</h2><p>Your ${DEVICE} ran out of memory while ${esc(m.name)} was running. Close other apps and tabs, then try again${lighter ? `, or switch to ${esc(lighter.name)} (smaller, about ${lighter.sizeMB} MB download)` : ''}.</p><button class="btn pri" id="crashRetry">Try again</button>${lighter ? ` <button class="btn" id="crashLighter">Use ${esc(lighter.name)}</button>` : ''}<div class="bar" id="setupBarWrap" hidden><div class="fill" id="setupBar"></div></div><p class="hint" id="setupText" style="margin-top:8px"></p></div>`;
+    if (crashBlocked && !loading) setup = `<div class="setup"><h2>OMEGA's brain crashed twice</h2><p>Your ${DEVICE} ran out of memory while ${esc(m.name)} was running. Close other apps and tabs, then try again${lighter ? `, or switch to ${esc(lighter.name)} (smaller, about ${sizeText(lighter.sizeMB)} download)` : ''}.</p><button class="btn pri" id="crashRetry">Try again</button>${lighter ? ` <button class="btn" id="crashLighter">Use ${esc(lighter.name)}</button>` : ''}<div class="bar" id="setupBarWrap" hidden><div class="fill" id="setupBar"></div></div><p class="hint" id="setupText" style="margin-top:8px"></p></div>`;
     else if (!wasmCheck()) setup = `<div class="setup"><h2>This browser can't run OMEGA's brain</h2><p>Use Safari on iPhone or Chrome on a computer. Live info still works: ask about weather, news or the time.</p></div>`;
     else if (cached || loading) { setup = `<div class="setup"><h2>Waking up OMEGA…</h2><p>Loading ${esc(m.name)} from this device. This takes a few seconds.</p><div class="bar" id="setupBarWrap"><div class="fill" id="setupBar"></div></div><p class="hint" id="setupText" style="margin-top:8px"></p></div>`; if (!loading) loadBrain(m.key, setupProgress).catch(e => showSetupError(e)); }
-    else setup = `<div class="setup"><h2>One-time setup</h2><p>OMEGA's brain (${esc(m.name)}) downloads to this device once, then runs offline. It's about ${m.sizeMB} MB, so use Wi-Fi and keep this page open while it downloads.</p><button class="btn pri" id="setupGo">Download OMEGA's brain</button><div class="bar" id="setupBarWrap" hidden><div class="fill" id="setupBar"></div></div><p class="hint" id="setupText" style="margin-top:8px"></p></div>`;
+    else setup = `<div class="setup"><h2>One-time setup</h2>${settings.auto && deviceCache ? `<p style="margin-bottom:6px"><b>Picked for your ${esc(kindWord(deviceCache.kind))}:</b> ${esc(m.name)}. ${esc(deviceCache.why)}</p>` : ''}<p>OMEGA's brain (${esc(m.name)}) downloads to this device once, then runs offline. It's about ${sizeText(m.sizeMB)}, so use Wi-Fi and keep this page open while it downloads.</p><button class="btn pri" id="setupGo">Download OMEGA's brain</button><div class="bar" id="setupBarWrap" hidden><div class="fill" id="setupBar"></div></div><p class="hint" id="setupText" style="margin-top:8px"></p></div>`;
+  }
+  let upgrade = '';
+  if (engine && settings.auto && !loading) {
+    const d = await detectDevice(), r = modelOf(d.rec);
+    if ((RANK[d.rec] || 0) > (RANK[loadedKey] || 0) && settings.skipRec !== d.rec && !(await isCached(r))) upgrade = `<div class="setup" style="margin-bottom:14px"><p style="margin:0 0 10px"><b>Your ${esc(kindWord(d.kind))} can run a smarter brain:</b> ${esc(r.name)} (about ${sizeText(r.sizeMB)}). ${esc(d.why)}</p><button class="btn pri" id="recGo">Get ${esc(r.name)}</button> <button class="btn" id="recSkip">Not now</button><div class="bar" id="recBarWrap" hidden><div class="fill" id="recBar"></div></div><p class="hint" id="recText" style="margin-top:8px"></p></div>`;
   }
   if (chat) return;
-  col.innerHTML = `${crashNote ? `<div class="err" style="max-width:520px;margin:8px auto">${esc(crashNote)}</div>` : ''}<div class="welcome"><div class="big">Ω</div><h1>${esc(greet())}${first}</h1><p>${engine ? 'What do you want to get done?' : `Your own AI, running on your ${DEVICE}.`}</p>${engine ? `<p class="hint" style="margin:-10px 0 14px">✓ ${esc(modelOf(loadedKey).name)} is saved on this ${DEVICE}, so it opens instantly next time, even offline.</p>` : ''}${engine && IS_IOS && !STANDALONE ? `<div class="setup" style="margin-bottom:14px"><p style="margin:0"><b>Tip:</b> tap Share → <b>Add to Home Screen</b>. Safari can clear saved website data after 7 days without a visit, but not for Home Screen apps. (The Home Screen app downloads the brain once more the first time you open it.)</p></div>` : ''}${setup}${engine ? `<div class="sugg">${SUGG.map((s, i) => `<button data-s="${i}"><b>${esc(s[0])}</b><span>${esc(s[1])}</span></button>`).join('')}</div>` : ''}</div>`;
+  col.innerHTML = `${crashNote ? `<div class="err" style="max-width:520px;margin:8px auto">${esc(crashNote)}</div>` : ''}<div class="welcome"><div class="big">Ω</div><h1>${esc(greet())}${first}</h1><p>${engine ? 'What do you want to get done?' : `Your own AI, running on your ${DEVICE}.`}</p>${engine ? `<p class="hint" style="margin:-10px 0 14px">✓ ${esc(modelOf(loadedKey).name)} is saved on this ${DEVICE}, so it opens instantly next time, even offline.</p>` : ''}${engine && IS_IOS && !STANDALONE ? `<div class="setup" style="margin-bottom:14px"><p style="margin:0"><b>Tip:</b> tap Share → <b>Add to Home Screen</b>. Safari can clear saved website data after 7 days without a visit, but not for Home Screen apps. (The Home Screen app downloads the brain once more the first time you open it.)</p></div>` : ''}${setup}${upgrade}${engine ? `<div class="sugg">${SUGG.map((s, i) => `<button data-s="${i}"><b>${esc(s[0])}</b><span>${esc(s[1])}</span></button>`).join('')}</div>` : ''}</div>`;
   col.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { const s = SUGG[+b.dataset.s]; inp.value = s[0] + ' ' + s[1]; grow(); inp.focus(); });
   const cr = $('#crashRetry'), cl = $('#crashLighter');
   if (cr) cr.onclick = () => { crashBlocked = false; store.set('crashes', null); refreshWelcome(); };
   if (cl) cl.onclick = () => { let k = LIGHTER[settings.model]; while (k && !fitsDevice(modelOf(k))) k = LIGHTER[k]; crashBlocked = false; store.set('crashes', null); settings.model = k; store.set('settings', settings); cl.disabled = cr.disabled = true; $('#setupBarWrap').hidden = false; loadBrain(k, setupProgress).catch(e => showSetupError(e)); };
+  const rg = $('#recGo'), rs = $('#recSkip');
+  if (rs) rs.onclick = () => { settings.skipRec = deviceCache && deviceCache.rec; store.set('settings', settings); refreshWelcome(); };
+  if (rg) rg.onclick = () => {
+    if (busy || loading) return; rg.disabled = rs.disabled = true; $('#recBarWrap').hidden = false;
+    loadBrain(deviceCache.rec, p => { $('#recBar').style.width = Math.round((p.progress || 0) * 100) + '%'; $('#recText').textContent = p.text || ''; })
+      .catch(e => { const t = $('#recText'); if (t) t.textContent = 'Could not switch: ' + e.message + ' Your current brain still works.'; rg.disabled = rs.disabled = false; if (!engine) refreshWelcome(); });
+  };
   const go = $('#setupGo');
   if (go) go.onclick = () => {
     go.disabled = true; $('#setupBarWrap').hidden = false;
@@ -673,23 +795,172 @@ function showSetupError(e) {
   el.appendChild(document.createElement('br')); el.appendChild(b);
   (col.querySelector('.setup') || col).appendChild(el);
 }
-function addUser(text) {
+function addUser(text, att) {
   const d = document.createElement('div'); d.className = 'msg user';
-  d.innerHTML = '<div class="bubble"></div>'; d.querySelector('.bubble').textContent = text; col.appendChild(d);
+  d.innerHTML = '<div class="uwrap"><div class="bubble"></div><button class="edit" aria-label="Edit message" title="Edit">✎ Edit</button></div>';
+  const bub = d.querySelector('.bubble');
+  if (att && att.files) for (const f of att.files) {
+    const a = document.createElement('div'); a.className = 'attchip';
+    if (f.thumb) { const im = document.createElement('img'); im.src = f.thumb; im.alt = ''; a.appendChild(im); }
+    a.appendChild(document.createTextNode((f.kind === 'video' ? '🎬 ' : f.kind === 'image' ? '' : f.kind === 'pdf' ? '📕 ' : '📄 ') + f.name));
+    bub.appendChild(a);
+  }
+  bub.appendChild(document.createTextNode(text));
+  d.querySelector('.edit').onclick = () => editLast(d, text);
+  col.appendChild(d);
+}
+// edit your last message: it goes back into the box, and that question + answer are removed
+function editLast(node, text) {
+  if (busy || !chat) return;
+  let i = chat.turns.length - 1; while (i >= 0 && chat.turns[i].role !== 'user') i--;
+  if (i < 0) return;
+  const att = liveAtt.get(chat.turns[i]) || chat.turns[i].att;
+  chat.turns.splice(i); while (node.nextSibling) node.nextSibling.remove(); node.remove();
+  if (att) { attachment = att; showAttachment(); }
+  inp.value = text; grow(); inp.focus(); saveChats();
+}
+// ---------------- attachments: photos, videos, PDFs, text files ----------------
+// limits keep the phone from running out of memory
+const LIMITS = { files: 3, imageMB: 25, videoMB: 200, videoMin: 10, pdfMB: 30, pdfPages: 60, textMB: 2 };
+let attachment = null; // { files: [{ kind, name, data?, blob?, thumb?, text?, loading? }] }
+const liveAtt = new WeakMap(); // full attachments (with the photo data) for this session; saved chats keep previews only
+const savedAtt = a => ({ files: a.files.map(f => ({ kind: f.kind, name: f.name, thumb: f.thumb, text: f.text ? clip(f.text, 20000) : undefined })) });
+const attText = a => a.files.filter(f => f.text).map(f => (a.files.length > 1 ? `== ${f.name} ==\n` : '') + f.text).join('\n\n');
+const TEXT_EXT = /\.(txt|md|markdown|csv|tsv|json|js|mjs|ts|tsx|jsx|py|html?|css|xml|log|ya?ml|ini|sql|java|c|cpp|h|cs|go|rs|rb|php|sh|swift|kt|srt|vtt)$/i;
+function showAttachment(msg) {
+  const tray = $('#attTray'); if (!tray) return;
+  const files = attachment ? attachment.files : [];
+  tray.hidden = !files.length && !msg;
+  tray.innerHTML = files.map((f, i) => `<div class="attitem${f.loading ? ' loading' : ''}">${f.thumb ? `<img src="${f.thumb}" alt="">` : `<span class="aico">${f.kind === 'video' ? '🎬' : f.kind === 'pdf' ? '📕' : '📄'}</span>`}<span class="aname">${esc(f.loading ? 'Reading ' + f.name + '…' : f.name)}</span><button data-rm="${i}" aria-label="Remove">✕</button></div>`).join('') + (msg ? `<div class="attmsg">${esc(msg)}</div>` : '');
+  tray.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { attachment.files.splice(+b.dataset.rm, 1); if (!attachment.files.length) attachment = null; showAttachment(); grow(); });
+  grow();
+}
+function downscale(src, max, q = 0.85) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => { const k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight)); const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(img.naturalWidth * k)); c.height = Math.max(1, Math.round(img.naturalHeight * k)); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); res(c); };
+    img.onerror = () => rej(new Error("That photo format can't be opened here. Try a JPG or PNG."));
+    img.src = src;
+  });
+}
+const canvasBuf = (c, q = 0.85) => new Promise(r => c.toBlob(b => r(b.arrayBuffer()), 'image/jpeg', q));
+async function videoInfo(file) {
+  const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.preload = 'metadata';
+  const url = URL.createObjectURL(file); v.src = url;
+  try {
+    await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = () => rej(new Error("That video can't be opened here. Try an MP4 or MOV.")); setTimeout(() => rej(new Error('That video took too long to open.')), 15000); });
+    const c = document.createElement('canvas'), k = Math.min(1, 200 / Math.max(v.videoWidth, v.videoHeight)); c.width = Math.round(v.videoWidth * k) || 160; c.height = Math.round(v.videoHeight * k) || 90;
+    c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+    return { duration: v.duration, thumb: c.toDataURL('image/jpeg', 0.7) };
+  } finally { URL.revokeObjectURL(url); }
+}
+let pdfjs = null;
+async function readPdf(file) {
+  if (!pdfjs) { pdfjs = await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs'); pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs'; }
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false }).promise;
+  const n = Math.min(doc.numPages, LIMITS.pdfPages); let out = '';
+  for (let i = 1; i <= n; i++) { const p = await doc.getPage(i); const tc = await p.getTextContent(); out += `\n[Page ${i}]\n` + tc.items.map(x => x.str + (x.hasEOL ? '\n' : ' ')).join(''); }
+  return { text: out.trim() || '(This PDF has no readable text. It may be a scan.)', pages: doc.numPages };
+}
+async function addFiles(list) {
+  const files = [...list]; if (!files.length) return;
+  if (!attachment) attachment = { files: [] };
+  const problems = [];
+  for (const file of files) {
+    if (attachment.files.length >= LIMITS.files) { problems.push(`Up to ${LIMITS.files} files per message.`); break; }
+    const mb = file.size / 1e6, name = file.name || 'file';
+    const kind = /^image\//.test(file.type) ? 'image' : /^video\//.test(file.type) ? 'video' : (file.type === 'application/pdf' || /\.pdf$/i.test(name)) ? 'pdf' : (/^text\//.test(file.type) || TEXT_EXT.test(name)) ? 'text' : null;
+    if (!kind) { problems.push(`${name}: that file type isn't supported yet (photos, videos, PDFs and text files work).`); continue; }
+    if (kind === 'video' && attachment.files.some(f => f.kind === 'video')) { problems.push('One video per message.'); continue; }
+    const max = { image: LIMITS.imageMB, video: LIMITS.videoMB, pdf: LIMITS.pdfMB, text: LIMITS.textMB }[kind];
+    if (mb > max) { problems.push(`${name} is ${mb.toFixed(0)} MB. The limit for ${kind === 'text' ? 'text files' : kind + 's'} is ${max} MB.`); continue; }
+    const f = { kind, name, loading: true }; attachment.files.push(f); showAttachment();
+    try {
+      if (kind === 'image') { const url = URL.createObjectURL(file); try { const big = await downscale(url, 1024); f.data = await canvasBuf(big); const th = await downscale(url, 160); f.thumb = th.toDataURL('image/jpeg', 0.7); } finally { URL.revokeObjectURL(url); } }
+      else if (kind === 'video') { const vi = await videoInfo(file); if (vi.duration > LIMITS.videoMin * 60) throw new Error(`${name} is ${Math.round(vi.duration / 60)} minutes long. Videos can be up to ${LIMITS.videoMin} minutes.`); f.blob = file; f.thumb = vi.thumb; f.duration = vi.duration; }
+      else if (kind === 'pdf') { const r = await readPdf(file); f.text = r.text; if (r.pages > LIMITS.pdfPages) problems.push(`${name} has ${r.pages} pages; OMEGA read the first ${LIMITS.pdfPages}.`); }
+      else f.text = await file.text();
+      f.loading = false;
+    } catch (e) { attachment.files.splice(attachment.files.indexOf(f), 1); problems.push(e.message || String(e)); }
+  }
+  if (attachment && !attachment.files.length) attachment = null;
+  showAttachment(problems.join(' '));
+}
+// ---------------- answering about photos and videos (vision brain, on this device) ----------------
+async function answerWithEyes(text, att, media, ui, turn) {
+  const vk = visionKey(), vm = modelOf(vk);
+  if (!(engine && loadedKey === vk)) {
+    if (!(await isCached(vm))) {
+      turn.text = `To look at photos and videos, OMEGA needs its eyes: the **${vm.name}** brain. It's about ${sizeText(vm.sizeMB)}, downloads once, and runs on this ${DEVICE}. Your photos never leave your ${DEVICE}.`;
+      render(ui.ans, turn.text);
+      const b = document.createElement('button'); b.className = 'btn pri'; b.textContent = `Download OMEGA's eyes (${sizeText(vm.sizeMB)})`; const p = document.createElement('div'); p.className = 'hint'; p.style.marginTop = '6px';
+      ui.ans.appendChild(b); ui.ans.appendChild(p);
+      b.onclick = () => { if (busy || loading) { p.textContent = 'Wait until OMEGA finishes, then tap again.'; return; } b.disabled = true; loadBrain(vk, x => { p.textContent = x.text || Math.round((x.progress || 0) * 100) + '%'; }).then(() => { p.textContent = 'Ready! Tap ↻ below to look again.'; b.remove(); }).catch(e => { p.textContent = 'Could not download: ' + e.message; b.disabled = false; }); };
+      return;
+    }
+    ui.work.hidden = false; ui.wt.textContent = 'Opening OMEGA\'s eyes…';
+    await loadBrain(vk, p => { ui.wt.textContent = `Opening OMEGA's eyes… ${Math.round((p.progress || 0) * 100)}%`; });
+  }
+  const parts = [], notes = [];
+  const imgs = media.filter(f => f.kind === 'image'), vid = media.find(f => f.kind === 'video');
+  if (vid) {
+    // videos: look at a few moments one by one (small vision brains are much better at single pictures), then answer
+    const { sampleVideoFrames } = await getWllama();
+    ui.work.hidden = false; ui.wt.textContent = 'Watching your video…';
+    const frames = await sampleVideoFrames(vid.blob, { maxFrames: IS_PHONE ? 4 : 6, maxEdge: 448 });
+    for (const [i, fr] of frames.entries()) {
+      if (stopFlag) break;
+      ui.wt.textContent = `Watching your video… moment ${i + 1} of ${frames.length}`;
+      const d = await engine.chat([{ role: 'user', content: [{ type: 'image', data: fr.data }, { type: 'text', text: 'In one short sentence, what is in this picture?' }] }], { maxTokens: 48, temperature: 0.1, onText: () => { } });
+      notes.push(`At ${Math.round(fr.time)}s: ${d.trim()}`);
+    }
+    turn.think = 'What OMEGA saw in the video:\n' + notes.join('\n');
+  }
+  for (const im of imgs) parts.push({ type: 'image', data: im.data });
+  const fileText = attText(att);
+  const ask = (vid ? `Notes about moments from the user's video (${Math.round(vid.duration || 0)} seconds long), in time order:\n${notes.join('\n')}\n\n` : '') + (fileText ? `Attached text:\n${clip(fileText, 3000)}\n\n` : '') + `${imgs.length > 1 ? `There are ${imgs.length} photos. ` : ''}${text}`;
+  parts.push({ type: 'text', text: ask });
+  const sys = `You are OMEGA, ${profile.name || 'the user'}'s friendly AI assistant. You can see the photos the user sends. Describe what is really there, read any text exactly, and answer the question directly and casually. If you are not sure about something in the picture, say so.`;
+  ui.wt.textContent = vid ? 'Watched your video' : imgs.length > 1 ? `Looked at ${imgs.length} photos` : 'Looked at your photo';
+  render(ui.ans, '', true);
+  const out = await engine.chat([{ role: 'system', content: sys }, { role: 'user', content: parts }], { maxTokens: 400, temperature: 0.2, onText: o => { render(ui.ans, thinkStrip(o), true); toBottom(); } });
+  turn.text = thinkStrip(out).trim() || (stopFlag ? '(stopped)' : "I couldn't make that out. Try a clearer photo?");
+  if (turn.think) showThoughts(ui, '<think>' + turn.think + '</think>', Date.now(), true), ui.think.querySelector('summary').textContent = '🎬 What OMEGA saw';
+  render(ui.ans, turn.text);
+}
+// ask again: removes the last answer and gets a fresh one
+function redoLast() {
+  if (busy || !chat) return;
+  const last = chat.turns[chat.turns.length - 1]; if (!last || last.role !== 'assistant') return;
+  chat.turns.pop(); const bots = col.querySelectorAll('.msg.bot'); bots[bots.length - 1].remove();
+  const u = chat.turns[chat.turns.length - 1]; if (!u || u.role !== 'user') return;
+  send({ text: u.text, redo: true, att: liveAtt.get(u) || u.att });
+}
+// read an answer out loud (the phone's built-in voice)
+function speak(text, btn) {
+  if (!('speechSynthesis' in window)) return;
+  if (speechSynthesis.speaking) { speechSynthesis.cancel(); if (btn.classList.contains('on')) { btn.classList.remove('on'); return; } }
+  document.querySelectorAll('[data-a=read].on').forEach(b => b.classList.remove('on'));
+  const plain = String(text).replace(/```[\s\S]*?```/g, ' (code) ').replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[*_#>`|]/g, '').replace(/\s+/g, ' ').trim();
+  const u = new SpeechSynthesisUtterance(plain); u.lang = 'en-US'; u.rate = 1.05;
+  u.onend = u.onerror = () => btn.classList.remove('on');
+  btn.classList.add('on'); speechSynthesis.speak(u);
 }
 function addBot() {
   const d = document.createElement('div'); d.className = 'msg bot';
-  d.innerHTML = '<div class="av">Ω</div><div class="body"><div class="work" hidden><span class="spin"></span><span class="wt"></span></div><div class="live" hidden></div><div class="md ans"><span class="typing"><i></i><i></i><i></i></span></div><div class="srcs"></div><div class="acts" hidden></div></div>';
+  d.innerHTML = '<div class="av">Ω</div><div class="body"><div class="work" hidden><span class="spin"></span><span class="wt"></span></div><div class="live" hidden></div><div class="think" hidden></div><div class="md ans"><span class="typing"><i></i><i></i><i></i></span></div><div class="srcs"></div><div class="acts" hidden></div></div>';
   col.appendChild(d);
-  return { el: d, work: d.querySelector('.work'), wt: d.querySelector('.wt'), live: d.querySelector('.live'), ans: d.querySelector('.ans'), srcs: d.querySelector('.srcs'), acts: d.querySelector('.acts') };
+  return { el: d, think: d.querySelector('.think'), work: d.querySelector('.work'), wt: d.querySelector('.wt'), live: d.querySelector('.live'), ans: d.querySelector('.ans'), srcs: d.querySelector('.srcs'), acts: d.querySelector('.acts') };
 }
 function showSources(ui, srcs) {
   ui.srcs.innerHTML = (srcs || []).filter(s => /^https:\/\//.test(s.url)).slice(0, 8).map(s => { let h = ''; try { h = new URL(s.url).hostname.replace(/^www\./, ''); } catch (e) { } return `<a href="${esc(s.url)}" target="_blank" rel="noopener" title="${esc(s.title)}">${esc(h === 'news.google.com' ? s.title : h || s.title)}</a>`; }).join('');
 }
 function showActs(ui, turn, q) {
   ui.acts.hidden = false;
-  ui.acts.innerHTML = `<button data-a="copy">Copy</button><button data-a="up" class="${turn.fb === 'up' ? 'on' : ''}" aria-label="Good answer">👍</button><button data-a="down" class="${turn.fb === 'down' ? 'on' : ''}" aria-label="Bad answer">👎</button>`;
+  ui.acts.innerHTML = `<button data-a="copy">Copy</button>${'speechSynthesis' in window ? '<button data-a="read" aria-label="Read out loud">🔊</button>' : ''}<button data-a="redo" aria-label="Get a new answer" title="Get a new answer">↻</button><button data-a="up" class="${turn.fb === 'up' ? 'on' : ''}" aria-label="Good answer">👍</button><button data-a="down" class="${turn.fb === 'down' ? 'on' : ''}" aria-label="Bad answer">👎</button>`;
   ui.acts.querySelector('[data-a=copy]').onclick = e => copyText(turn.text, e.target);
+  const rd = ui.acts.querySelector('[data-a=read]'); if (rd) rd.onclick = e => speak(turn.text, e.currentTarget);
+  ui.acts.querySelector('[data-a=redo]').onclick = redoLast;
   ui.acts.querySelector('[data-a=up]').onclick = e => {
     turn.fb = 'up'; e.target.classList.add('on'); ui.acts.querySelector('[data-a=down]').classList.remove('on');
     if (q && !liked.some(x => x.q === q && x.a === turn.text)) { liked.push({ q, a: turn.text, t: Date.now() }); liked = liked.slice(-300); store.set('liked', liked); }
@@ -701,8 +972,8 @@ function staticTurns() {
   col.innerHTML = '';
   let lastQ = '';
   for (const t of chat.turns) {
-    if (t.role === 'user') { addUser(t.text); lastQ = t.text; }
-    else { const ui = addBot(); if (t.live) { ui.live.textContent = t.live; ui.live.hidden = false; } render(ui.ans, t.text); showSources(ui, t.sources); showActs(ui, t, lastQ); }
+    if (t.role === 'user') { addUser(t.text, t.att); lastQ = t.text; }
+    else { const ui = addBot(); if (t.live) { ui.live.textContent = t.live; ui.live.hidden = false; } if (t.think) { ui.think.dataset.secs = '…'; showThoughts(ui, '<think>' + t.think + '</think>', Date.now(), true); ui.think.querySelector('summary').textContent = '💡 Show thinking'; } render(ui.ans, t.text); showSources(ui, t.sources); showActs(ui, t, lastQ); }
   }
 }
 
@@ -714,15 +985,22 @@ const SEND_SVG = sendBtn.innerHTML, STOP_SVG = '<svg width="14" height="14" view
 function setBusy(b) { busy = b; sendBtn.innerHTML = b ? STOP_SVG : SEND_SVG; sendBtn.setAttribute('aria-label', b ? 'Stop' : 'Send'); grow(); }
 sendBtn.onclick = () => { if (busy) { stopFlag = true; try { engine && engine.stop(); } catch (e) { } } else send(); };
 
-async function send() {
-  const text = inp.value.trim(); if (!text || busy) return;
-  if (!chat) { chat = { id: 'c' + Date.now(), title: clip(text, 60), turns: [], t: Date.now() }; col.innerHTML = ''; $('#title').textContent = chat.title; }
-  inp.value = ''; grow();
-  addUser(text); chat.turns.push({ role: 'user', text });
+async function send(opts = {}) {
+  if (busy) return;
+  const att = opts.redo ? opts.att : attachment; // files the user attached (photos, a video, a PDF or text files)
+  let text = String(opts.text ?? inp.value).trim();
+  if (!text && !(att && att.files.length)) return;
+  if (!text) text = att.files.some(f => f.kind === 'video') ? 'What happens in this video?' : att.files.some(f => f.kind === 'image') ? "What's in this photo?" : 'Summarize this file.';
+  if (att && att.files.some(f => f.loading)) { showAttachment('Still reading your file… one sec.'); return; }
+  if (!chat) { chat = { id: 'c' + Date.now(), title: clip(text, 60), turns: [], t: Date.now() }; col.innerHTML = ''; $('#title').textContent = chat.title; syncTop(); }
+  if (!opts.redo) { inp.value = ''; attachment = null; showAttachment(); grow(); addUser(text, att); chat.turns.push(att ? { role: 'user', text, att: savedAtt(att) } : { role: 'user', text }); if (att) liveAtt.set(chat.turns[chat.turns.length - 1], att); }
   const ui = addBot(); toBottom(true);
   setBusy(true); stopFlag = false;
   const turn = { role: 'assistant', text: '', sources: [] };
   try {
+    const media = att ? att.files.filter(f => (f.kind === 'image' && f.data) || (f.kind === 'video' && f.blob)) : [];
+    if (att && att.files.some(f => (f.kind === 'image' || f.kind === 'video')) && !media.length) { turn.text = 'That photo/video is no longer in memory (saved chats keep only a preview). Attach it again with 📎 and ask.'; render(ui.ans, turn.text); return; }
+    if (media.length) { await answerWithEyes(text, att, media, ui, turn); return; }
     // memory command
     const rem = text.match(/^(?:please\s+)?(?:remember|don'?t forget)(?:\s+that)?[:,]?\s+(.{3,})$/i);
     if (rem) { const f = rem[1].replace(/[.!]+$/, ''); facts.push(f); facts = facts.slice(-100); store.set('facts', facts); renderFacts(); }
@@ -751,12 +1029,14 @@ async function send() {
       }
     }
     if (/^(what'?s|whats|what is|do you know|do you remember|remember)\s+my name\b|^who am i\b/i.test(text) && profile.name) { turn.text = `Your name is ${profile.name}.`; render(ui.ans, turn.text); return; }
-    const math = quickMath(text);
+    const pic = att ? null : pictureRequest(text);
+    if (pic) { await makePicture(pic, ui, turn); return; }
+    const math = att ? null : quickMath(text);
     if (math) { turn.text = math; render(ui.ans, turn.text); return; } // exact, instant, no brain needed
     // live info first, so OMEGA can still help even if the brain can't start
     let live = '', liveShown = '';
     if (settings.live && !rem) {
-      const tools = navigator.onLine === false ? [] : decideTools(text); // no internet: skip live info, just answer
+      const tools = navigator.onLine === false || att ? [] : decideTools(text); // no internet (or a file to read): skip live info
       if (tools.length) {
         ui.work.hidden = false; ui.wt.textContent = 'Checking live info: ' + tools.map(t => t[0]).join(', ') + '…';
         const res = await Promise.allSettled(tools.map(t => t[1]()));
@@ -779,6 +1059,7 @@ async function send() {
       if (liveShown) return turn.live ? `${why} The live info is in the card above.` : `${why}\n\nHere's the live info I found:\n\n${liveShown}`;
       return why;
     };
+    if (engine && modelOf(loadedKey).vision && !loading) { ui.work.hidden = false; ui.wt.textContent = 'Switching back to the chat brain…'; await dropEngine(); }
     if (!engine) {
       try {
         if (loading) { ui.work.hidden = false; ui.wt.textContent = 'Waking up OMEGA…'; await loading; }
@@ -794,15 +1075,17 @@ async function send() {
     // answer
     const codeMode = $('#codeChip').getAttribute('aria-pressed') === 'true';
     const wantsApp = codeMode && /\b(app|calculator|website|web ?site|page|landing|game|tool|timer|stopwatch|to-?do|todo|tracker|form|quiz|clock|counter|converter|ui|dashboard|portfolio|menu|button)\b/i.test(text) && !/\b(python|script|terminal|command line|node|java|c\+\+|swift|sql)\b/i.test(text);
-    const userContent = (live ? 'LIVE INFO (fetched just now):\n' + clip(live, IS_PHONE ? 2400 : 5000) + '\n\n(Answer using the LIVE INFO above. It is real and current. If it lists headlines or results, summarize the most relevant ones, and prefer the newest dated item. If the LIVE INFO does not contain the exact answer (for example a time, score or date), say you could not find that exact detail and share what you did find. Never guess numbers, times or scores.)\n---\n' : '') + text + (wantsApp ? '\n\n(Make it as ONE complete, working ```html file with the CSS and JavaScript inside. No input() prompts. It must work on a phone screen.)' : '');
+    const userContent = (live ? 'LIVE INFO (fetched just now):\n' + clip(live, IS_PHONE ? 2400 : 5000) + '\n\n(Answer using the LIVE INFO above. It is real and current. If it lists headlines or results, summarize the most relevant ones, and prefer the newest dated item. If the LIVE INFO does not contain the exact answer (for example a time, score or date), say you could not find that exact detail and share what you did find. Never guess numbers, times or scores.)\n---\n' : '') + (att && attText(att) ? `Here is the file the user attached (${att.files.map(f => f.name).join(', ')}):\n-----\n${clip(attText(att), Math.max(1200, (CTX - 900) * 3))}\n-----\n\nUsing the file above, answer this: ` : '') + text + (wantsApp ? '\n\n(Make it as ONE complete, working ```html file with the CSS and JavaScript inside. No input() prompts. It must work on a phone screen.)' : '');
     const hist = codeMode && IS_PHONE ? [] : historyFor(IS_PHONE ? (live ? 1200 : 2600) : (live ? 3500 : 6000));
     if (hist.length) hist.pop(); // drop the current user turn (already added) — we send the enriched version
     const messages = [{ role: 'system', content: systemPrompt(codeMode, !!live) }, ...hist, { role: 'user', content: userContent }];
     const promptTokens = Math.ceil(messages.reduce((n, x) => n + x.content.length, 0) / 3.2) + 40;
     const want = IS_PHONE ? (codeMode ? 1400 : 500) : (codeMode ? 2000 : 800);
-    const opts = { temperature: codeMode ? 0.3 : 0.7, maxTokens: Math.max(200, Math.min(want, CTX - promptTokens - 64)), onText: out => { render(ui.ans, thinkStrip(out), true); toBottom(); } };
+    const think = thinkOn() && !!modelOf(loadedKey).thinking;
+    const t0 = Date.now();
+    const opts = { think, temperature: think ? 0.6 : codeMode ? 0.3 : 0.7, maxTokens: Math.max(200, Math.min(think ? want * 3 : want, CTX - promptTokens - 64)), onText: out => { showThoughts(ui, out, t0); render(ui.ans, thinkStrip(out), true); toBottom(); } };
     render(ui.ans, '', true); toBottom(); // shows "Thinking…" until the first words arrive
-    const run = async msgs => thinkStrip(await engine.chat(msgs, opts)).trim();
+    const run = async msgs => { const raw = await engine.chat(msgs, opts); const th = thoughtsOf(raw); if (th) turn.think = clip(th, 6000); showThoughts(ui, raw, t0, true); return thinkStrip(raw).trim(); };
     setInflight({ model: loadedKey, t: Date.now(), what: 'answer' });
     try { turn.text = await run(messages); }
     catch (e) {
@@ -836,7 +1119,7 @@ async function send() {
       const p = document.createElement('div'); p.className = 'hint'; p.style.marginTop = '6px'; d.appendChild(p);
       if (crashBlocked) { b.textContent = 'Go to the home screen'; b.onclick = () => newChat(); }
       else {
-        const m = modelOf(settings.model); b.textContent = `Download OMEGA's brain (${m.sizeMB} MB)`;
+        const m = modelOf(settings.model); b.textContent = `Download OMEGA's brain (${sizeText(m.sizeMB)})`;
         b.onclick = () => { b.disabled = true; loadBrain(m.key, x => { p.textContent = x.text || Math.round((x.progress || 0) * 100) + '%'; }).then(() => { p.textContent = 'Ready! Ask me again.'; b.remove(); }).catch(err => { p.textContent = 'Could not download: ' + err.message; b.disabled = false; }); };
       }
     }
@@ -859,7 +1142,10 @@ function saveChats() {
   renderChats();
 }
 function renderChats() {
-  $('#chats').innerHTML = chats.length ? chats.map(c => `<div class="chatitem ${chat && c.id === chat.id ? 'on' : ''}"><button class="open" data-open="${esc(c.id)}">${esc(c.title || 'Chat')}</button><button class="del" data-del="${esc(c.id)}" aria-label="Delete chat">✕</button></div>`).join('') : '<div class="empty">Your chats show up here.</div>';
+  const q = ($('#chatSearch') && $('#chatSearch').value || '').trim().toLowerCase();
+  const list = q ? chats.filter(c => (c.title || '').toLowerCase().includes(q) || c.turns.some(t => String(t.text || '').toLowerCase().includes(q))) : chats;
+  syncTop();
+  $('#chats').innerHTML = list.length ? list.map(c => `<div class="chatitem ${chat && c.id === chat.id ? 'on' : ''}"><button class="open" data-open="${esc(c.id)}">${esc(c.title || 'Chat')}</button><button class="del" data-del="${esc(c.id)}" aria-label="Delete chat">✕</button></div>`).join('') : `<div class="empty">${q ? 'No chats match.' : 'Your chats show up here.'}</div>`;
 }
 $('#chats').onclick = e => {
   const o = e.target.closest('[data-open]'), d = e.target.closest('[data-del]');
@@ -889,14 +1175,20 @@ $('#codeChip').onclick = () => { const on = $('#codeChip').getAttribute('aria-pr
 // settings sheet
 let pick = settings.model;
 async function renderSettings() {
+  detectDevice().then(d => {
+    const th = brainThreads(), r = modelOf(d.rec);
+    $('#devInfo').innerHTML = `<b>${esc(d.kind)}</b> · ${d.cores} processor cores${d.memGB ? ` · ${d.memGB}+ GB memory` : ''} · graphics chip: ${d.gpu.ok ? 'yes (fast mode available)' : 'not used'} · multi-core brain: ${th > 1 ? `on (${th} cores)` : 'off'}<br>Best brain for this ${esc(kindWord(d.kind))}: <b>${esc(r.name)}</b>. ${esc(d.why)}`;
+  });
+  $('#autoPick').checked = !!settings.auto;
   $('#gpuInfo').textContent = engine ? `Running ${modelOf(loadedKey).name} on this device's ${engine.kind === 'cpu' ? 'processor' : 'graphics chip'}.` : (wasmCheck() ? 'Pick a brain and load it. It downloads once.' : "This browser can't run OMEGA's brain.");
   if (!fitsDevice(modelOf(pick))) pick = settings.model;
   const rows = await Promise.all(MODELS.map(async m => ({ m, cached: fitsDevice(m) && await isCached(m) })));
-  $('#models').innerHTML = rows.map(({ m, cached }) => { const ok = fitsDevice(m); return `<label class="model ${pick === m.key ? 'on' : ''}" ${ok ? '' : 'style="opacity:.5"'}><input type="radio" name="model" value="${m.key}" ${pick === m.key ? 'checked' : ''} ${ok ? '' : 'disabled'}><div><b>${esc(m.name)}${loadedKey === m.key ? ' · running' : cached ? ' · downloaded' : ''}</b><span>${esc(m.desc)} About ${m.sizeMB} MB.${ok ? '' : ` Not available on ${DEVICE} (Safari would crash).`}</span></div></label>`; }).join('');
+  $('#models').innerHTML = rows.map(({ m, cached }) => { const ok = fitsDevice(m); return `<label class="model ${pick === m.key ? 'on' : ''}" ${ok ? '' : 'style="opacity:.5"'}><input type="radio" name="model" value="${m.key}" ${pick === m.key ? 'checked' : ''} ${ok ? '' : 'disabled'}><div><b>${esc(m.name)}${loadedKey === m.key ? ' · running' : cached ? ' · downloaded' : ''}</b><span>${esc(m.desc)} About ${sizeText(m.sizeMB)}.${ok ? '' : ` Not available on ${DEVICE} (Safari would crash).`}</span></div></label>`; }).join('');
   $('#models').querySelectorAll('input').forEach(i => i.onchange = () => { pick = i.value; renderSettings(); });
   $('#loadBtn').disabled = loadedKey === pick || !!loading || busy;
   $('#loadHint').textContent = loadedKey === pick ? 'Already running.' : '';
 }
+$('#autoPick').onchange = e => { settings.auto = e.target.checked; settings.skipRec = null; store.set('settings', settings); if (!chat) refreshWelcome(); };
 $('#loadBtn').onclick = () => {
   if (busy || loading) { $('#loadText').textContent = busy ? 'Wait until OMEGA finishes answering.' : 'Already loading…'; return; }
   $('#loadBtn').disabled = true; $('#loadBarWrap').hidden = false; $('#loadText').textContent = 'Starting…';
@@ -965,9 +1257,44 @@ if (SR) {
 
 // pressing Stop cancels the brain mid-sentence; that cancel isn't an error
 addEventListener('unhandledrejection', e => { if (/abort/i.test(String(e.reason && (e.reason.name || e.reason.message) || e.reason))) e.preventDefault(); });
+// ---------------- composer extras: attach, think, chat search, share, theme ----------------
+$('#attachBtn').onclick = () => { if (!busy) $('#fileIn').click(); };
+$('#fileIn').onchange = e => { addFiles(e.target.files); e.target.value = ''; };
+// paste or drop photos/files straight into the box
+inp.addEventListener('paste', e => { const fs = [...(e.clipboardData && e.clipboardData.files || [])]; if (fs.length) { e.preventDefault(); addFiles(fs); } });
+document.addEventListener('dragover', e => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) e.preventDefault(); });
+document.addEventListener('drop', e => { if (e.dataTransfer && e.dataTransfer.files.length) { e.preventDefault(); addFiles(e.dataTransfer.files); } });
+$('#thinkChip').onclick = () => { const on = $('#thinkChip').getAttribute('aria-pressed') !== 'true'; $('#thinkChip').setAttribute('aria-pressed', String(on)); settings.think = on; store.set('settings', settings); };
+if (settings.think) $('#thinkChip').setAttribute('aria-pressed', 'true');
+$('#chatSearch').addEventListener('input', renderChats);
+function syncTop() { $('#shareChat').hidden = !(chat && chat.turns.length); }
+$('#shareChat').onclick = async () => {
+  if (!chat) return;
+  const md = `# ${chat.title}\n\n` + chat.turns.map(t => (t.role === 'user' ? '**You:** ' : '**OMEGA:** ') + (t.att ? '[' + t.att.files.map(f => f.name).join(', ') + '] ' : '') + t.text).join('\n\n');
+  try { if (navigator.share && IS_PHONE) { await navigator.share({ title: chat.title, text: md }); return; } } catch (e) { if (e.name === 'AbortError') return; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([md], { type: 'text/markdown' })); a.download = (chat.title.replace(/[^\w -]+/g, '').trim().slice(0, 40) || 'omega-chat') + '.md'; document.body.appendChild(a); a.click(); a.remove();
+};
+function applyTheme() {
+  const t = settings.theme || 'auto';
+  if (t === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', t);
+  document.querySelectorAll('#themeSeg button').forEach(b => b.classList.toggle('on', b.dataset.theme === t));
+  const dark = t === 'dark' || (t === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+  document.querySelectorAll('meta[name=theme-color]').forEach(m => { m.removeAttribute('media'); m.content = dark ? '#262624' : '#faf9f5'; });
+}
+document.querySelectorAll('#themeSeg button').forEach(b => b.onclick = () => { settings.theme = b.dataset.theme; store.set('settings', settings); applyTheme(); });
+applyTheme();
 // ---------------- boot ----------------
 fillProfile(); renderFacts(); renderChats(); syncChips(); grow(); refreshWelcome();
-if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => { });
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  navigator.serviceWorker.register('sw.js').catch(() => { });
+  // the multi-core brain needs the page to be served by the offline helper: reload once when it first takes over (never mid-answer)
+  if (!window.crossOriginIsolated && typeof SharedArrayBuffer === 'undefined') navigator.serviceWorker.ready.then(() => {
+    let tried = false; try { tried = !!sessionStorage.getItem('omega.coi'); sessionStorage.setItem('omega.coi', '1'); } catch (e) { tried = true; }
+    if (tried) return;
+    const go = () => { if (!busy && !loading && !engine) location.reload(); };
+    if (navigator.serviceWorker.controller) go(); else navigator.serviceWorker.addEventListener('controllerchange', go, { once: true });
+  }).catch(() => { });
+}
 // keep the downloaded brain from being cleared by the browser when storage is low
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => { });
-window.OMEGA = { quickMath, decideTools, currencyPair, placeFrom, isClockQuestion, toolWeather, toolTime, toolNews, toolCrypto, toolCurrency, version: VERSION };
+window.OMEGA = { threads: () => ({ isolated: !!window.crossOriginIsolated, cores: navigator.hardwareConcurrency || 1, brainThreads: brainThreads() }), quickMath, decideTools, currencyPair, placeFrom, isClockQuestion, toolWeather, toolTime, toolNews, toolCrypto, toolCurrency, version: VERSION };

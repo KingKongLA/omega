@@ -13,13 +13,14 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-180.png">
-<link rel="stylesheet" href="style.css?v=23">
+<link rel="stylesheet" href="style.css?v=24">
 </head>
 <body>
 <div class="app" id="app">
   <aside id="side">
     <div class="brand"><span class="logo">Ω</span>OMEGA</div>
     <button class="navbtn" id="newChat"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>New chat</button>
+    <input type="search" id="chatSearch" class="search" placeholder="Search chats" aria-label="Search chats">
     <div class="label">Recent</div>
     <div class="chats" id="chats"></div>
     <div class="foot">
@@ -33,16 +34,21 @@
     <div class="top">
       <button class="iconbtn menu" id="menu" aria-label="Open chats"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg></button>
       <div class="title" id="title">OMEGA</div>
+      <button class="iconbtn" id="shareChat" aria-label="Share or save this chat" title="Share or save this chat" hidden><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg></button>
       <button class="iconbtn" id="newChat2" aria-label="New chat"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
     </div>
     <div class="scroll" id="scroll"><div class="col" id="col"></div></div>
     <div class="composer">
       <div class="status" id="brainStatus" hidden></div>
       <div class="box">
+        <div class="atttray" id="attTray" hidden></div>
         <textarea id="input" rows="1" placeholder="Message OMEGA" aria-label="Message OMEGA"></textarea>
         <div class="tools">
+          <button class="iconbtn" id="attachBtn" aria-label="Attach photos, a video or a file" title="Attach photos, a video, a PDF or a text file"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l9.2-9.2a3.7 3.7 0 0 1 5.2 5.2l-9.2 9.2a1.8 1.8 0 0 1-2.6-2.6l8.5-8.5"/></svg></button>
+          <input type="file" id="fileIn" multiple accept="image/*,video/*,.pdf,.txt,.md,.csv,.json,.js,.ts,.py,.html,.css,.xml,.log,.yml,.yaml,.srt" hidden>
           <button class="chip" id="webChip" aria-pressed="true" title="Live info: weather, news, web">🌐 Live info</button>
           <button class="chip" id="codeChip" aria-pressed="false" title="Coding mode">&lt;/&gt; Code</button>
+          <button class="chip" id="thinkChip" aria-pressed="false" title="Think harder before answering (slower, smarter)">💡 Think</button>
           <button class="iconbtn" id="mic" aria-label="Dictate" hidden><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
           <button class="send" id="send" aria-label="Send" disabled><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
         </div>
@@ -57,14 +63,21 @@
 <div class="sheet" id="setSheet" hidden role="dialog" aria-label="Brain and settings">
   <div class="hd"><h2>Brain and settings</h2><button class="iconbtn" data-close aria-label="Close">✕</button></div>
   <p class="hint">OMEGA's brain is an open-source AI model that downloads once and then runs on this device. Processor brains work on any phone; fast-mode brains use a computer's graphics chip. Nothing you say leaves your device except live-info lookups.</p>
+  <h3>Your device</h3>
+  <div id="devInfo" class="hint" style="line-height:1.6">Checking this device…</div>
+  <label class="toggle"><input type="checkbox" id="autoPick"> Automatically pick the best brain for this device</label>
   <div id="gpuInfo" class="note"></div>
+  <h3>Appearance</h3>
+  <div class="seg" id="themeSeg" role="radiogroup" aria-label="Appearance"><button data-theme="auto">Auto</button><button data-theme="light">Light</button><button data-theme="dark">Dark</button></div>
   <h3>Choose a brain</h3>
   <div id="models" class="models"></div>
   <div class="row"><button class="btn pri" id="loadBtn">Load this brain</button><span class="hint" id="loadHint"></span></div>
   <div class="bar" id="loadBarWrap" hidden><div class="fill" id="loadBar"></div></div>
   <div class="hint" id="loadText"></div>
+  <h3>Eyes (photos and videos)</h3>
+  <p class="hint" id="visionInfo">When you attach a photo or video, OMEGA uses a vision brain that runs on this device. It downloads the first time you need it.</p>
   <h3>Live info sources</h3>
-  <p class="hint">Free public sources, no accounts: Open-Meteo (weather), Bing News and NYT (news), DuckDuckGo via Jina Reader and Wikipedia (web), CoinGecko and Coinbase (crypto), Frankfurter and ExchangeRate-API (currency).</p>
+  <p class="hint">Free public sources, no accounts: Open-Meteo (weather), Bing News and NYT (news), DuckDuckGo via Jina Reader and Wikipedia (web), CoinGecko and Coinbase (crypto), Frankfurter and ExchangeRate-API (currency), Pollinations (pictures).</p>
   <div class="row"><button class="btn" id="testSrc">Test live sources</button></div>
   <ul class="list" id="srcResults"></ul>
   <h3>Data</h3>
@@ -98,6 +111,6 @@
   <div class="row"><button class="btn pri" id="fbSave">Save lesson</button></div>
 </div>
 
-<script type="module" src="app.js?v=23"></script>
+<script type="module" src="app.js?v=24"></script>
 </body>
 </html>
