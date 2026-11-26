@@ -7,10 +7,12 @@ const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.89';
 const WLLAMA_URL = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/index.js';
 const WLLAMA_WASM = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/wasm/wllama.wasm';
 const PROXY = 'https://proxy.cors.dev/';
-const VERSION = '3.0.0';
+const VERSION = '3.1.0';
 
 const MODELS = [
   { key: 'cpu-qwen3-0.6b', engine: 'cpu', name: 'Qwen3 0.6B', repo: 'unsloth/Qwen3-0.6B-GGUF', file: 'Qwen3-0.6B-Q4_K_M.gguf', sizeMB: 400, memMB: 650, thinking: true, desc: 'Recommended for phones and tablets. Runs on the processor, so it does not crash.' },
+  { key: 'cpu-qwen3.5-0.8b', engine: 'cpu', name: 'Qwen3.5 0.8B', repo: 'unsloth/Qwen3.5-0.8B-GGUF', file: 'Qwen3.5-0.8B-Q4_K_M.gguf', sizeMB: 533, memMB: 800, thinking: true, desc: 'Newer and smarter than Qwen3 0.6B, still light enough for phones.' },
+  { key: 'cpu-lfm2.5-1.2b', engine: 'cpu', name: 'LFM2.5 1.2B', repo: 'LiquidAI/LFM2.5-1.2B-Instruct-GGUF', file: 'LFM2.5-1.2B-Instruct-Q4_K_M.gguf', sizeMB: 731, memMB: 1000, desc: 'Fast and sharp, built for phones by Liquid AI.' },
   { key: 'cpu-llama-1b', engine: 'cpu', name: 'Llama 3.2 1B', repo: 'unsloth/Llama-3.2-1B-Instruct-GGUF', file: 'Llama-3.2-1B-Instruct-Q4_K_M.gguf', sizeMB: 810, memMB: 1050, desc: 'Smarter, more natural chat. A little slower.' },
   { key: 'cpu-qwen3-1.7b', engine: 'cpu', name: 'Qwen3 1.7B', repo: 'unsloth/Qwen3-1.7B-GGUF', file: 'Qwen3-1.7B-Q4_K_M.gguf', sizeMB: 1110, memMB: 1400, thinking: true, experimentalIOS: true, desc: 'Much smarter. Great on computers and strong phones. On iPhone it is experimental: if it runs out of memory, OMEGA goes back to your smaller brain.' },
   { key: 'cpu-qwen3-4b', engine: 'cpu', name: 'Qwen3 4B', repo: 'unsloth/Qwen3-4B-Instruct-2507-GGUF', file: 'Qwen3-4B-Instruct-2507-Q4_K_M.gguf', sizeMB: 2500, memMB: 3200, desc: 'Smartest processor brain. For computers with 8+ cores and plenty of memory.' },
@@ -31,14 +33,14 @@ const IS_IPAD = /iPad/i.test(navigator.userAgent) || (navigator.maxTouchPoints >
 const DEVICE = IS_IPAD ? 'iPad' : IS_IOS ? 'iPhone' : IS_PHONE ? 'phone' : 'device';
 const STANDALONE = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
 const CTX = IS_PHONE ? 2048 : 4096; // smaller working memory on phones = far less RAM
-const PHONE_DEFAULT = 'cpu-qwen3-0.6b';
+const PHONE_DEFAULT = 'cpu-lfm2.5-1.2b';
 const DESKTOP_DEFAULT = 'gpu-qwen3-1.7b';
 // iPhone: processor brains only (Safari kills tabs over ~1.5 GB and its graphics process crashes easily)
 const fitsDevice = m => !IS_IOS || (m.engine === 'cpu' && (m.memMB <= 1100 || m.experimentalIOS));
 // if a brain crashes or cannot start, OMEGA moves down this list
-const LIGHTER = { 'gpu-qwen3-4b': 'gpu-qwen3-1.7b', 'gpu-llama-3b': 'gpu-qwen3-1.7b', 'gpu-coder-3b': 'gpu-qwen3-1.7b', 'gpu-qwen3-1.7b': 'cpu-qwen3-1.7b', 'cpu-qwen3-4b': 'cpu-qwen3-1.7b', 'cpu-qwen3-1.7b': 'cpu-qwen3-0.6b', 'cpu-llama-1b': 'cpu-qwen3-0.6b', 'cpu-qwen3-0.6b': 'cpu-qwen2.5-0.5b' };
+const LIGHTER = { 'gpu-qwen3-4b': 'gpu-qwen3-1.7b', 'gpu-llama-3b': 'gpu-qwen3-1.7b', 'gpu-coder-3b': 'gpu-qwen3-1.7b', 'gpu-qwen3-1.7b': 'cpu-qwen3-1.7b', 'cpu-qwen3-4b': 'cpu-qwen3-1.7b', 'cpu-qwen3-1.7b': 'cpu-qwen3-0.6b', 'cpu-llama-1b': 'cpu-qwen3-0.6b', 'cpu-lfm2.5-1.2b': 'cpu-qwen3-0.6b', 'cpu-qwen3.5-0.8b': 'cpu-qwen3-0.6b', 'cpu-qwen3-0.6b': 'cpu-qwen2.5-0.5b' };
 // how smart each brain is (for "a better brain is available" suggestions)
-const RANK = { 'cpu-qwen2.5-0.5b': 1, 'cpu-qwen3-0.6b': 2, 'cpu-llama-1b': 3, 'cpu-qwen3-1.7b': 4, 'gpu-qwen3-1.7b': 5, 'gpu-llama-3b': 5, 'gpu-coder-3b': 5, 'cpu-qwen3-4b': 6, 'gpu-qwen3-4b': 7 };
+const RANK = { 'cpu-qwen2.5-0.5b': 1, 'cpu-qwen3-0.6b': 2, 'cpu-llama-1b': 3, 'cpu-qwen3.5-0.8b': 3, 'cpu-qwen3-1.7b': 4, 'cpu-lfm2.5-1.2b': 4.5, 'gpu-qwen3-1.7b': 5, 'gpu-llama-3b': 5, 'gpu-coder-3b': 5, 'cpu-qwen3-4b': 6, 'gpu-qwen3-4b': 7 };
 const isGpuCrash = e => /device (was )?lost|disposed|external instance|mapAsync|GPUDevice|out of memory|OOM|allocation|WebGPU|Instance reference|graphics adapter|memory access out of bounds|RuntimeError|Aborted\(/i.test(String((e && e.message) || e));
 
 // ---------------- small helpers ----------------
@@ -93,7 +95,7 @@ async function pickSavedBrain() {
   // nothing downloaded yet: suggest the best brain for this device
   if (settings.auto) { const d = await detectDevice(); if (d.rec !== settings.model) { settings.model = d.rec; store.set('settings', settings); } }
 }
-let chat = null, busy = false, stopFlag = false;
+let chat = null, busy = false, stopFlag = false, voiceAsk = false; // voiceAsk: the question was spoken, so read the answer aloud
 let webllm = null, wllamaMod = null, engine = null, loadedKey = null, loading = null, hasF16 = null;
 const codes = {}; let seq = 0;
 
@@ -518,7 +520,20 @@ function hydratePics(root) {
   });
 }
 // exact math for simple calculations ("what's 15% of 240", "347 times 29", "(12+8)/4")
+const UNITS = { mi: ['km', 1.609344, 'miles', 'kilometers'], km: ['mi', 1 / 1.609344, 'kilometers', 'miles'], lb: ['kg', 0.45359237, 'pounds', 'kilograms'], kg: ['lb', 1 / 0.45359237, 'kilograms', 'pounds'], ft: ['m', 0.3048, 'feet', 'meters'], m: ['ft', 1 / 0.3048, 'meters', 'feet'], in: ['cm', 2.54, 'inches', 'centimeters'], cm: ['in', 1 / 2.54, 'centimeters', 'inches'], oz: ['g', 28.349523125, 'ounces', 'grams'], g: ['oz', 1 / 28.349523125, 'grams', 'ounces'], gal: ['l', 3.785411784, 'gallons', 'liters'], l: ['gal', 1 / 3.785411784, 'liters', 'gallons'], yd: ['m', 0.9144, 'yards', 'meters'], mph: ['kmh', 1.609344, 'mph', 'km/h'], kmh: ['mph', 1 / 1.609344, 'km/h', 'mph'] };
+const UNIT_WORDS = [[/\b(miles?|mi)\b/, 'mi'], [/\b(kilometers?|kilometres?|kms?)\b/, 'km'], [/\b(pounds?|lbs?)\b/, 'lb'], [/\b(kilograms?|kilos?|kgs?)\b/, 'kg'], [/\b(feet|foot|ft)\b/, 'ft'], [/\b(meters?|metres?)\b/, 'm'], [/\b(inches|inch|in)\b/, 'in'], [/\b(centimeters?|centimetres?|cm)\b/, 'cm'], [/\b(ounces?|oz)\b/, 'oz'], [/\b(grams?|g)\b/, 'g'], [/\b(gallons?|gal)\b/, 'gal'], [/\b(liters?|litres?|l)\b/, 'l'], [/\b(yards?|yd)\b/, 'yd'], [/\bmph\b/, 'mph'], [/\b(km\/h|kph|kmh)\b/, 'kmh']];
+function unitOf(w) { for (const [re, u] of UNIT_WORDS) if (re.test(w)) return u; return null; }
+function quickConvert(text) {
+  const t = text.toLowerCase().replace(/,(?=\d{3})/g, '');
+  let m = t.match(/(-?\d+(?:\.\d+)?)\s*(?:°|degrees?)?\s*(f|fahrenheit|c|celsius|centigrade)\b.*?\b(?:to|in|into)\s*(?:°|degrees?)?\s*(f|fahrenheit|c|celsius)\b/);
+  if (m) { const v = +m[1], from = m[2][0], to = m[3][0]; if (from === to) return null; const r = from === 'f' ? (v - 32) * 5 / 9 : v * 9 / 5 + 32; return `${v}°${from.toUpperCase()} = ${fmtNum(Math.round(r * 10) / 10)}°${to.toUpperCase()}`; }
+  m = t.match(/(-?\d+(?:\.\d+)?)\s*([a-z\/]+(?:\s[a-z]+)?)\s+(?:to|in|into|=)\s+([a-z\/]+)/);
+  if (!m) return null;
+  const a = unitOf(m[2]), b = unitOf(m[3]); if (!a || !b || UNITS[a][0] !== b) return null;
+  const [, k, an, bn] = UNITS[a]; return `${fmtNum(+m[1])} ${an} = ${fmtNum(Math.round(+m[1] * k * 100) / 100)} ${bn}`;
+}
 function quickMath(text) {
+  const conv = quickConvert(text); if (conv) return conv;
   let t = text.toLowerCase().replace(/,(?=\d{3})/g, '').replace(/[?!=]+/g, ' ').trim();
   t = t.replace(/^(yo|hey|bro|omega|ok|okay)[, ]+/g, '').replace(/^(what'?s|whats|what is|how much is|calculate|calc|compute|solve)\s+/, '').replace(/\s+(equal|equals|be)$/, '');
   const pct = t.match(/^(\d+(?:\.\d+)?)\s*(?:%|percent)\s+of\s+(\d+(?:\.\d+)?)$/);
@@ -543,7 +558,7 @@ function decideTools(text) {
   const personal = /\b(my name|my city|my business|my job|my age|my birthday|about me|who am i|do you (know|remember) (me|my)|what do you know about me|my favorite|my girlfriend|my boyfriend|my wife|my husband|my mom|my dad|my kids?)\b/.test(t) || /\b(when|what|where|how|who) (do|did|am|was|should) i\b.*\bmy\b/.test(t);
   if (!tools.length && !url && !build && !personal) {
     const words = t.split(/\s+/).filter(Boolean).length;
-    const live = /\b(today|tonight|yesterday|tomorrow|this (week|weekend|month|year)|right now|currently|current|latest|recent|newest|new|upcoming|202[4-9]|price|prices|cost|how much|who won|score|scores|how did|game (last night|tonight|today|yesterday)|release date|released|open now|hours|near me|stock|search|look up|google|out yet|is .+ out|when do|when are|when'?s|next game|play next|plays next|playing next|schedule|tonight'?s game|come out|comes out|coming out|release|drops?|launch(es|ing)?|premieres?|what day|what time|who is|who's|what is|what's|when is|when does|when did|where is|is .+ still|did .+ (die|win|lose)|ceo of|president|election|update)\b/.test(t);
+    const live = /\b(today|tonight|yesterday|tomorrow|this (week|weekend|month|year)|right now|currently|current|latest|recent|newest|new|upcoming|202[4-9]|price|prices|cost|how much|who won|score|scores|how did|game (last night|tonight|today|yesterday)|release date|released|open now|hours|near me|stock|search|look up|google|out yet|is .+ out|when do|when are|when'?s|next game|play next|plays next|playing next|schedule|tonight'?s game|come out|comes out|coming out|release|drops?|launch(es|ing)?|premieres?|what day|what time|who is|who's|what is|what's|when is|when does|when did|where is|is .+ still|did .+ (die|win|lose)|ceo of|president|election|update|who (wrote|painted|invented|discovered|founded|directed|sang|created|built|made|starred|plays|played)|plot of|summary of|history of|biography|tell me about (?!yourself|you\b|me\b))\b/.test(t);
     const casual = /^(hi|hey|yo|sup|wassup|thanks|thank you|ok|okay|lol|lmao|bet|cool|nice|good (morning|night|afternoon))\b/.test(t) && words <= 5;
     const sports = /\b(won|win|score|scores|beat|lost|game|games|match|fight|final|play|plays|playing|schedule)\b/.test(t) && !/\b(video ?games?|ps5|xbox|switch|steam|gta|coming out|come out|release|released)\b/.test(t);
     // sports: latest news only (web results often show older games); web search only if no news is found
@@ -590,8 +605,7 @@ async function detectDevice() {
   const kind = IS_IPAD ? 'iPad' : IS_IOS ? 'iPhone' : /Android/i.test(navigator.userAgent) ? (/Mobile/i.test(navigator.userAgent) ? 'Android phone' : 'Android tablet') : 'Computer';
   const gpu = IS_IOS ? { ok: false, why: 'Not used on iPhone/iPad (Safari would crash)' } : await gpuCheck();
   let rec, why;
-  if (IS_IOS) { rec = 'cpu-qwen3-0.6b'; why = `Safari limits how much memory a page can use on ${kind}, so the light, fast brain is the safe choice.`; }
-  else if (IS_PHONE) { rec = memGB && memGB >= 8 && cores >= 8 ? 'cpu-qwen3-1.7b' : 'cpu-qwen3-0.6b'; why = rec === 'cpu-qwen3-1.7b' ? 'This phone has lots of memory and cores, so it can run the smarter brain.' : 'The light, fast brain fits this phone best.'; }
+  if (IS_PHONE) { rec = 'cpu-lfm2.5-1.2b'; why = `LFM2.5 1.2B is built for phones: it scored best in OMEGA's tests and fits ${IS_IOS ? "Safari's memory limit" : 'phone memory'} comfortably.`; }
   else if (gpu.ok) { rec = 'gpu-qwen3-1.7b'; why = 'This computer has a graphics chip, so fast mode makes answers much quicker.'; }
   else { rec = cores >= 4 ? 'cpu-qwen3-1.7b' : 'cpu-qwen3-0.6b'; why = cores >= 4 ? `No graphics chip available, but ${cores} processor cores can run the smarter brain.` : 'A light brain fits this computer best.'; }
   deviceCache = { kind, cores, memGB, gpu, rec, why };
@@ -709,12 +723,12 @@ function systemPrompt(codeMode, hasLive) {
   const f = facts.slice(-30).map(x => '- ' + third(x)).join('\n');
   const l = lessons.slice(-6).map(x => `- When asked "${clip(x.q, 120)}", ${name} said: ${clip(x.fix, 300)}`).join('\n');
   return [
-    `You are OMEGA, ${name}'s personal AI assistant. You are an AI, not a person, so don't pretend to have a body, a personal life or human experiences. Happily help with anything ${name} asks: questions, advice, stories, jokes, scripts, captions, plans and code. Talk in a casual, warm, direct way, like a helpful friend texting back. Reply to exactly what ${name} said. Short answers for simple stuff, more detail when it's needed.`,
+    `You are OMEGA, ${name}'s personal AI assistant. You are an AI, not a person, so don't pretend to have a body, a personal life or human experiences. Happily help with anything ${name} asks: questions, advice, stories, jokes, scripts, captions, plans and code. Your name is OMEGA: if asked who or what you are, say you are OMEGA, ${name}'s own AI that runs right on their device (not ChatGPT, not Claude). Talk in a casual, warm, direct way, like a helpful friend texting back. Reply to exactly what ${name} said. Short answers for simple stuff, more detail when it's needed.`,
     profile.style ? `How ${name} wants you to talk: ${profile.style}` : '',
     profile.about ? `About ${name}: ${profile.about}` : '',
     f ? `Facts about ${name} (when ${name} asks about "my ...", answer with "your ..."):\n${f}` : '',
     l ? `Feedback ${name} gave you before (follow it):\n${l}` : '',
-    hasLive ? 'The message includes LIVE INFO fetched from the internet just now: answer from it, copy numbers, times and names exactly as written, and name the source.' : 'If you do not know something, say so instead of making it up.',
+    hasLive ? 'The message includes LIVE INFO fetched from the internet just now: answer from it, copy numbers, times and names exactly as written, and name the source.' : (store.get('promptVariant', '') === 'b' ? 'Answer common-knowledge questions directly. If you really do not know something, say so instead of making it up.' : 'If you do not know something, say so instead of making it up.'),
     codeMode ? 'CODING MODE: write complete, working code in fenced code blocks with a language tag (```html, ```javascript, ```python). For a game, app, website or anything visual: reply with ONE short sentence, then ONE complete self-contained ```html file (all CSS and JavaScript inside it, no outside files or images). It is played on a phone: fill the screen, and make taps/touches work (touchstart) as well as clicks and keys. Keep it simple so it is finished and works. Do not explain the code after it. For plain scripts, JavaScript runs in a worker (use console.log).' : '',
   ].filter(Boolean).join('\n\n');
 }
@@ -761,9 +775,10 @@ async function refreshWelcome() {
     else setup = `<div class="setup"><h2>One-time setup</h2>${settings.auto && deviceCache ? `<p style="margin-bottom:6px"><b>Picked for your ${esc(kindWord(deviceCache.kind))}:</b> ${esc(m.name)}. ${esc(deviceCache.why)}</p>` : ''}<p>OMEGA's brain (${esc(m.name)}) downloads to this device once, then runs offline. It's about ${sizeText(m.sizeMB)}, so use Wi-Fi and keep this page open while it downloads.</p><button class="btn pri" id="setupGo">Download OMEGA's brain</button><div class="bar" id="setupBarWrap" hidden><div class="fill" id="setupBar"></div></div><p class="hint" id="setupText" style="margin-top:8px"></p></div>`;
   }
   let upgrade = '';
-  if (engine && settings.auto && !loading) {
+  if (engine && settings.auto && !modelOf(loadedKey).vision) {
     const d = await detectDevice(), r = modelOf(d.rec);
-    if ((RANK[d.rec] || 0) > (RANK[loadedKey] || 0) && settings.skipRec !== d.rec && !(await isCached(r))) upgrade = `<div class="setup" style="margin-bottom:14px"><p style="margin:0 0 10px"><b>Your ${esc(kindWord(d.kind))} can run a smarter brain:</b> ${esc(r.name)} (about ${sizeText(r.sizeMB)}). ${esc(d.why)}</p><button class="btn pri" id="recGo">Get ${esc(r.name)}</button> <button class="btn" id="recSkip">Not now</button><div class="bar" id="recBarWrap" hidden><div class="fill" id="recBar"></div></div><p class="hint" id="recText" style="margin-top:8px"></p></div>`;
+    const saved = await isCached(r).catch(() => false);
+    if ((RANK[d.rec] || 0) > (RANK[loadedKey] || 0) && settings.skipRec !== d.rec) upgrade = `<div class="setup" style="margin-bottom:14px"><p style="margin:0 0 10px"><b>Your ${esc(kindWord(d.kind))} can run a smarter brain:</b> ${esc(r.name)} (${saved ? `already saved on this ${DEVICE}, switches in seconds` : 'about ' + sizeText(r.sizeMB)}). ${esc(d.why)}</p><button class="btn pri" id="recGo">${saved ? 'Switch' : 'Get'} ${esc(r.name)}</button> <button class="btn" id="recSkip">Not now</button><div class="bar" id="recBarWrap" hidden><div class="fill" id="recBar"></div></div><p class="hint" id="recText" style="margin-top:8px"></p></div>`;
   }
   if (chat) return;
   col.innerHTML = `${crashNote ? `<div class="err" style="max-width:520px;margin:8px auto">${esc(crashNote)}</div>` : ''}<div class="welcome"><div class="big">Ω</div><h1>${esc(greet())}${first}</h1><p>${engine ? 'What do you want to get done?' : `Your own AI, running on your ${DEVICE}.`}</p>${engine ? `<p class="hint" style="margin:-10px 0 14px">✓ ${esc(modelOf(loadedKey).name)} is saved on this ${DEVICE}, so it opens instantly next time, even offline.</p>` : ''}${engine && IS_IOS && !STANDALONE ? `<div class="setup" style="margin-bottom:14px"><p style="margin:0"><b>Tip:</b> tap Share → <b>Add to Home Screen</b>. Safari can clear saved website data after 7 days without a visit, but not for Home Screen apps. (The Home Screen app downloads the brain once more the first time you open it.)</p></div>` : ''}${setup}${upgrade}${engine ? `<div class="sugg">${SUGG.map((s, i) => `<button data-s="${i}"><b>${esc(s[0])}</b><span>${esc(s[1])}</span></button>`).join('')}</div>` : ''}</div>`;
@@ -849,6 +864,7 @@ async function videoInfo(file) {
   const url = URL.createObjectURL(file); v.src = url;
   try {
     await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = () => rej(new Error("That video can't be opened here. Try an MP4 or MOV.")); setTimeout(() => rej(new Error('That video took too long to open.')), 15000); });
+    await new Promise(res => { v.onseeked = res; v.currentTime = Math.min(1, (v.duration || 2) / 3); setTimeout(res, 3000); }); // a frame a moment in (the very first one is often black)
     const c = document.createElement('canvas'), k = Math.min(1, 200 / Math.max(v.videoWidth, v.videoHeight)); c.width = Math.round(v.videoWidth * k) || 160; c.height = Math.round(v.videoHeight * k) || 90;
     c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
     return { duration: v.duration, thumb: c.toDataURL('image/jpeg', 0.7) };
@@ -928,6 +944,60 @@ async function answerWithEyes(text, att, media, ui, turn) {
   if (turn.think) showThoughts(ui, '<think>' + turn.think + '</think>', Date.now(), true), ui.think.querySelector('summary').textContent = '🎬 What OMEGA saw';
   render(ui.ans, turn.text);
 }
+// ---------------- optional cloud brain (OpenRouter, free models, your own key stays on this device) ----------------
+const cloudOn = () => !!(settings.cloud && settings.cloudKey && navigator.onLine !== false);
+let cloudAbort = null;
+async function cloudChat(messages, o) {
+  cloudAbort = new AbortController(); const sig = cloudAbort.signal;
+  const t = setTimeout(() => cloudAbort.abort(), 120000);
+  try {
+    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.cloudKey, 'X-Title': 'OMEGA' },
+      body: JSON.stringify({ model: settings.cloudModel || 'openrouter/free', messages, stream: true, max_tokens: o.maxTokens, temperature: o.temperature }) });
+    if (!r.ok) { let m = 'HTTP ' + r.status; try { const j = await r.json(); m = (j.error && j.error.message) || m; } catch (_) { } if (r.status === 401) m = 'the cloud key is not valid'; if (r.status === 429) m = 'free limit reached for now'; throw new Error(m); }
+    const rd = r.body.getReader(), dec = new TextDecoder(); let buf = '', text = '', reason = '', model = '';
+    while (true) {
+      const { done, value } = await rd.read(); if (done) break;
+      buf += dec.decode(value, { stream: true }); const lines = buf.split('\n'); buf = lines.pop();
+      for (const ln of lines) {
+        const l = ln.trim(); if (!l.startsWith('data:')) continue; const d = l.slice(5).trim(); if (d === '[DONE]') continue;
+        try { const j = JSON.parse(d); if (j.error) throw new Error(j.error.message || 'cloud error'); model = j.model || model; const dl = (j.choices && j.choices[0] && j.choices[0].delta) || {}; reason += dl.reasoning || dl.reasoning_content || ''; text += dl.content || ''; } catch (e) { if (/cloud error|error/i.test(e.message) && !/JSON/.test(e.message)) throw e; }
+        o.onText(reason ? '<think>' + reason + (text ? '</think>' : '') + text : text);
+        if (stopFlag) { cloudAbort.abort(); break; }
+      }
+      if (stopFlag) break;
+    }
+    o.model = model;
+    if (!text.trim() && !stopFlag) throw new Error('empty answer');
+    return reason ? '<think>' + reason + '</think>' + text : text;
+  } catch (e) { if (sig.aborted && stopFlag) return ''; if (sig.aborted) throw new Error('took too long'); throw e; }
+  finally { clearTimeout(t); }
+}
+const toDataURL = buf => new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(new Blob([buf], { type: 'image/jpeg' })); });
+async function answerInCloud(text, live, att, ui, turn, media = []) {
+  ui.work.hidden = false; ui.wt.textContent = '☁️ Asking the cloud brain…';
+  const codeMode = $('#codeChip').getAttribute('aria-pressed') === 'true';
+  const files = att ? attText(att) : '';
+  const content = (live ? 'LIVE INFO (fetched just now):\n' + clip(live, 8000) + '\n\n(Use the LIVE INFO above; it is current. Copy numbers exactly. If it does not contain the exact answer, say so.)\n---\n' : '') + (files ? `Attached file(s):\n-----\n${clip(files, 30000)}\n-----\n\n` : '') + text;
+  let user = content;
+  if (media.length) {
+    const parts = [];
+    for (const f of media) {
+      if (f.kind === 'image') parts.push({ type: 'image_url', image_url: { url: await toDataURL(f.data) } });
+      if (f.kind === 'video') { const { sampleVideoFrames } = await getWllama(); const fr = await sampleVideoFrames(f.blob, { maxFrames: 6, maxEdge: 512 }); for (const x of fr) { parts.push({ type: 'text', text: `Frame at ${Math.round(x.time)}s:` }); parts.push({ type: 'image_url', image_url: { url: await toDataURL(x.data) } }); } }
+    }
+    parts.push({ type: 'text', text: (media.some(f => f.kind === 'video') ? 'These are frames from my video, in order. ' : '') + content });
+    user = parts;
+  }
+  const hist = historyFor(12000); if (hist.length) hist.pop();
+  const messages = [{ role: 'system', content: systemPrompt(codeMode, !!live) }, ...hist, { role: 'user', content: user }];
+  const t0 = Date.now(), o = { maxTokens: codeMode ? 6000 : 2000, temperature: codeMode ? 0.3 : 0.6, onText: out => { showThoughts(ui, out, t0); render(ui.ans, thinkStrip(out), true); toBottom(); } };
+  render(ui.ans, '', true);
+  const raw = await cloudChat(messages, o);
+  const th = thoughtsOf(raw); if (th) { turn.think = clip(th, 6000); showThoughts(ui, raw, t0, true); }
+  turn.text = thinkStrip(raw).trim() || '(stopped)';
+  ui.wt.textContent = `☁️ Answered by the cloud brain${o.model ? ' (' + o.model.replace(/:free$/, '') + ')' : ''}`;
+  render(ui.ans, turn.text);
+}
 // ask again: removes the last answer and gets a fresh one
 function redoLast() {
   if (busy || !chat) return;
@@ -983,7 +1053,7 @@ const coarse = window.matchMedia && matchMedia('(pointer:coarse)').matches;
 inp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !coarse && !e.isComposing) { e.preventDefault(); send(); } });
 const SEND_SVG = sendBtn.innerHTML, STOP_SVG = '<svg width="14" height="14" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3" fill="currentColor"/></svg>';
 function setBusy(b) { busy = b; sendBtn.innerHTML = b ? STOP_SVG : SEND_SVG; sendBtn.setAttribute('aria-label', b ? 'Stop' : 'Send'); grow(); }
-sendBtn.onclick = () => { if (busy) { stopFlag = true; try { engine && engine.stop(); } catch (e) { } } else send(); };
+sendBtn.onclick = () => { if (busy) { stopFlag = true; try { engine && engine.stop(); } catch (e) { } try { cloudAbort && cloudAbort.abort(); } catch (e) { } } else send(); };
 
 async function send(opts = {}) {
   if (busy) return;
@@ -993,6 +1063,7 @@ async function send(opts = {}) {
   if (!text) text = att.files.some(f => f.kind === 'video') ? 'What happens in this video?' : att.files.some(f => f.kind === 'image') ? "What's in this photo?" : 'Summarize this file.';
   if (att && att.files.some(f => f.loading)) { showAttachment('Still reading your file… one sec.'); return; }
   if (!chat) { chat = { id: 'c' + Date.now(), title: clip(text, 60), turns: [], t: Date.now() }; col.innerHTML = ''; $('#title').textContent = chat.title; syncTop(); }
+  const spoken = voiceAsk && !opts.redo; voiceAsk = false;
   if (!opts.redo) { inp.value = ''; attachment = null; showAttachment(); grow(); addUser(text, att); chat.turns.push(att ? { role: 'user', text, att: savedAtt(att) } : { role: 'user', text }); if (att) liveAtt.set(chat.turns[chat.turns.length - 1], att); }
   const ui = addBot(); toBottom(true);
   setBusy(true); stopFlag = false;
@@ -1000,7 +1071,10 @@ async function send(opts = {}) {
   try {
     const media = att ? att.files.filter(f => (f.kind === 'image' && f.data) || (f.kind === 'video' && f.blob)) : [];
     if (att && att.files.some(f => (f.kind === 'image' || f.kind === 'video')) && !media.length) { turn.text = 'That photo/video is no longer in memory (saved chats keep only a preview). Attach it again with 📎 and ask.'; render(ui.ans, turn.text); return; }
-    if (media.length) { await answerWithEyes(text, att, media, ui, turn); return; }
+    if (media.length) {
+      if (cloudOn()) { try { await answerInCloud(text, '', att, ui, turn, media); return; } catch (e) { if (stopFlag) return; ui.work.hidden = false; ui.wt.textContent = `Cloud brain unavailable, using OMEGA's own eyes`; } }
+      await answerWithEyes(text, att, media, ui, turn); return;
+    }
     // memory command
     const rem = text.match(/^(?:please\s+)?(?:remember|don'?t forget)(?:\s+that)?[:,]?\s+(.{3,})$/i);
     if (rem) { const f = rem[1].replace(/[.!]+$/, ''); facts.push(f); facts = facts.slice(-100); store.set('facts', facts); renderFacts(); }
@@ -1059,6 +1133,11 @@ async function send(opts = {}) {
       if (liveShown) return turn.live ? `${why} The live info is in the card above.` : `${why}\n\nHere's the live info I found:\n\n${liveShown}`;
       return why;
     };
+    // optional cloud brain (free OpenRouter models): much smarter when online; the phone brain takes over if it fails
+    if (cloudOn()) {
+      try { await answerInCloud(text, live, att, ui, turn); return; }
+      catch (e) { if (stopFlag) { turn.text = turn.text || '(stopped)'; render(ui.ans, turn.text); return; } ui.work.hidden = false; ui.wt.textContent = `Cloud brain unavailable (${clip(e.message, 60)}), using the phone brain`; }
+    }
     if (engine && modelOf(loadedKey).vision && !loading) { ui.work.hidden = false; ui.wt.textContent = 'Switching back to the chat brain…'; await dropEngine(); }
     if (!engine) {
       try {
@@ -1082,8 +1161,10 @@ async function send(opts = {}) {
     const promptTokens = Math.ceil(messages.reduce((n, x) => n + x.content.length, 0) / 3.2) + 40;
     const want = IS_PHONE ? (codeMode ? 1400 : 500) : (codeMode ? 2000 : 800);
     const think = thinkOn() && !!modelOf(loadedKey).thinking;
+    if (thinkOn() && !think) messages[messages.length - 1].content += '\n\n(Think it through step by step first, then give the final answer clearly at the end.)';
     const t0 = Date.now();
-    const opts = { think, temperature: think ? 0.6 : codeMode ? 0.3 : 0.7, maxTokens: Math.max(200, Math.min(think ? want * 3 : want, CTX - promptTokens - 64)), onText: out => { showThoughts(ui, out, t0); render(ui.ans, thinkStrip(out), true); toBottom(); } };
+    const creative = /\b(write|story|poem|haiku|joke|caption|lyrics|rap|song|script|name ideas|ideas|brainstorm|slogan|funny|creative|imagine)\b/i.test(text);
+    const opts = { think, temperature: think ? 0.6 : codeMode ? 0.3 : creative ? 0.8 : 0.35, maxTokens: Math.max(200, Math.min(think ? want * 3 : want, CTX - promptTokens - 64)), onText: out => { showThoughts(ui, out, t0); render(ui.ans, thinkStrip(out), true); toBottom(); } };
     render(ui.ans, '', true); toBottom(); // shows "Thinking…" until the first words arrive
     const run = async msgs => { const raw = await engine.chat(msgs, opts); const th = thoughtsOf(raw); if (th) turn.think = clip(th, 6000); showThoughts(ui, raw, t0, true); return thinkStrip(raw).trim(); };
     setInflight({ model: loadedKey, t: Date.now(), what: 'answer' });
@@ -1125,7 +1206,7 @@ async function send(opts = {}) {
     }
     turn.text = '';
   } finally {
-    if (turn.text) { chat.turns.push(turn); showSources(ui, turn.sources); showActs(ui, turn, text); }
+    if (turn.text) { chat.turns.push(turn); showSources(ui, turn.sources); showActs(ui, turn, text); if (spoken && !stopFlag && settings.voiceReply !== false) { const rb = ui.acts.querySelector('[data-a=read]'); if (rb) speak(turn.text, rb); } }
     else chat.turns.pop();
     saveChats(); setBusy(false); toBottom();
   }
@@ -1179,7 +1260,7 @@ async function renderSettings() {
     const th = brainThreads(), r = modelOf(d.rec);
     $('#devInfo').innerHTML = `<b>${esc(d.kind)}</b> · ${d.cores} processor cores${d.memGB ? ` · ${d.memGB}+ GB memory` : ''} · graphics chip: ${d.gpu.ok ? 'yes (fast mode available)' : 'not used'} · multi-core brain: ${th > 1 ? `on (${th} cores)` : 'off'}<br>Best brain for this ${esc(kindWord(d.kind))}: <b>${esc(r.name)}</b>. ${esc(d.why)}`;
   });
-  $('#autoPick').checked = !!settings.auto;
+  $('#autoPick').checked = !!settings.auto; syncCloud();
   $('#gpuInfo').textContent = engine ? `Running ${modelOf(loadedKey).name} on this device's ${engine.kind === 'cpu' ? 'processor' : 'graphics chip'}.` : (wasmCheck() ? 'Pick a brain and load it. It downloads once.' : "This browser can't run OMEGA's brain.");
   if (!fitsDevice(modelOf(pick))) pick = settings.model;
   const rows = await Promise.all(MODELS.map(async m => ({ m, cached: fitsDevice(m) && await isCached(m) })));
@@ -1187,6 +1268,12 @@ async function renderSettings() {
   $('#models').querySelectorAll('input').forEach(i => i.onchange = () => { pick = i.value; renderSettings(); });
   $('#loadBtn').disabled = loadedKey === pick || !!loading || busy;
   $('#loadHint').textContent = loadedKey === pick ? 'Already running.' : '';
+}
+$('#cloudOn').onchange = e => { settings.cloud = e.target.checked; store.set('settings', settings); syncCloud(); };
+$('#cloudKey').onchange = e => { settings.cloudKey = e.target.value.trim(); store.set('settings', settings); syncCloud(); };
+function syncCloud() {
+  $('#cloudOn').checked = !!settings.cloud; $('#cloudKey').value = settings.cloudKey || '';
+  $('#cloudState').textContent = settings.cloud ? (settings.cloudKey ? (navigator.onLine === false ? 'On, but you are offline: the phone brain answers.' : 'On: answers come from free cloud models when you are online. Your messages go to OpenRouter.') : 'Paste your free key to turn it on.') : 'Off: everything stays on this device.';
 }
 $('#autoPick').onchange = e => { settings.auto = e.target.checked; settings.skipRec = null; store.set('settings', settings); if (!chat) refreshWelcome(); };
 $('#loadBtn').onclick = () => {
@@ -1248,7 +1335,7 @@ if (SR) {
     if (rec) { rec.stop(); return; }
     rec = new SR(); rec.lang = 'en-US'; rec.interimResults = true; rec.continuous = false;
     const base = inp.value ? inp.value + ' ' : '';
-    rec.onresult = ev => { inp.value = base + [...ev.results].map(r => r[0].transcript).join(''); grow(); };
+    rec.onresult = ev => { inp.value = base + [...ev.results].map(r => r[0].transcript).join(''); grow(); voiceAsk = true; };
     rec.onend = () => { rec = null; mic.style.color = ''; };
     rec.onerror = () => { rec = null; mic.style.color = ''; };
     mic.style.color = 'var(--acc)'; try { rec.start(); } catch (e) { rec = null; mic.style.color = ''; }

@@ -1,0 +1,130 @@
+{
+ "about": "Fixed 30-question quiz used to compare OMEGA brains and prompt changes. check = regex or JS function applied to the answer text.",
+ "results": {
+  "cpu-qwen3-0.6b": "26-27/30",
+  "cpu-qwen3.5-0.8b": "27/30",
+  "cpu-lfm2.5-1.2b": "30/30"
+ },
+ "questions": [
+  {
+   "q": "what is the capital of france",
+   "check": "/paris/i"
+  },
+  {
+   "q": "how many days are in a leap year",
+   "check": "/366/"
+  },
+  {
+   "q": "who wrote romeo and juliet",
+   "check": "/shakespeare/i"
+  },
+  {
+   "q": "translate 'good morning' to spanish",
+   "check": "/buen[oa]s? d[ií]as/i"
+  },
+  {
+   "q": "what is the boiling point of water in fahrenheit",
+   "check": "/212/"
+  },
+  {
+   "q": "give me 3 tips to sleep better",
+   "check": "a=>(a.match(/^\\s*(\\d[.)]|[-•*])/gm)||[]).length>=3||(a.match(/\\n/g)||[]).length>=2"
+  },
+  {
+   "q": "write a haiku about rain",
+   "check": "a=>a.split('\\n').filter(x=>x.trim()).length>=3&&a.length<400"
+  },
+  {
+   "q": "explain what an API is in one sentence",
+   "check": "a=>a.length<400&&/api|interface/i.test(a)"
+  },
+  {
+   "q": "is a tomato a fruit",
+   "check": "/fruit/i"
+  },
+  {
+   "q": "what's bigger, the sun or the earth",
+   "check": "/sun/i"
+  },
+  {
+   "q": "hi",
+   "check": "a=>a.length<220"
+  },
+  {
+   "q": "what's your name",
+   "check": "/omega/i"
+  },
+  {
+   "q": "are you chatgpt",
+   "check": "a=>/omega/i.test(a)&&!/i am chatgpt|i'm chatgpt/i.test(a)"
+  },
+  {
+   "q": "tell me about yourself",
+   "check": "a=>/omega/i.test(a)&&!/my (wife|kids|childhood|hometown)|i grew up/i.test(a)"
+  },
+  {
+   "q": "how do i boil an egg",
+   "check": "a=>/water/i.test(a)&&/minute/i.test(a)"
+  },
+  {
+   "q": "convert 5 miles to km",
+   "check": "/8\\.0|8 km|8\\.05|8\\.04/"
+  },
+  {
+   "q": "write a short text to my boss saying I will be late today",
+   "check": "a=>/late/i.test(a)&&a.length<700"
+  },
+  {
+   "q": "summarize the plot of the lion king in 2 sentences",
+   "check": "/simba/i"
+  },
+  {
+   "q": "what year did world war 2 end",
+   "check": "/1945/"
+  },
+  {
+   "q": "how many legs does a spider have",
+   "check": "/\\b8\\b|eight/i"
+  },
+  {
+   "q": "what is the largest ocean",
+   "check": "/pacific/i"
+  },
+  {
+   "q": "what does CPU stand for",
+   "check": "/central processing unit/i"
+  },
+  {
+   "q": "write python code to reverse a list",
+   "check": "/\\[::-1\\]|reverse/i"
+  },
+  {
+   "q": "what is the square root of 144",
+   "check": "/\\b12\\b/"
+  },
+  {
+   "q": "what's 25 degrees celsius in fahrenheit",
+   "check": "/\\b77\\b/"
+  },
+  {
+   "q": "who painted the mona lisa",
+   "check": "/leonardo|da vinci/i"
+  },
+  {
+   "q": "what is the chemical symbol for gold",
+   "check": "/\\bAu\\b/"
+  },
+  {
+   "q": "how many continents are there",
+   "check": "/\\b7\\b|seven/i"
+  },
+  {
+   "q": "what planet is known as the red planet",
+   "check": "/mars/i"
+  },
+  {
+   "q": "give me a motivational quote",
+   "check": "a=>a.length>15&&a.length<500"
+  }
+ ]
+}

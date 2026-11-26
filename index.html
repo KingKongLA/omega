@@ -13,7 +13,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-180.png">
-<link rel="stylesheet" href="style.css?v=24">
+<link rel="stylesheet" href="style.css?v=25">
 </head>
 <body>
 <div class="app" id="app">
@@ -74,6 +74,11 @@
   <div class="row"><button class="btn pri" id="loadBtn">Load this brain</button><span class="hint" id="loadHint"></span></div>
   <div class="bar" id="loadBarWrap" hidden><div class="fill" id="loadBar"></div></div>
   <div class="hint" id="loadText"></div>
+  <h3>Cloud brain (optional, free)</h3>
+  <p class="hint">For much smarter answers when you are online, OMEGA can use free AI models through OpenRouter. Get a free key at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a> and paste it here. The key stays on this device. If the cloud fails or you are offline, the phone brain answers.</p>
+  <input type="password" id="cloudKey" placeholder="sk-or-…" autocomplete="off" spellcheck="false" style="width:100%;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:16px">
+  <label class="toggle"><input type="checkbox" id="cloudOn"> Use the cloud brain when online</label>
+  <p class="hint" id="cloudState"></p>
   <h3>Eyes (photos and videos)</h3>
   <p class="hint" id="visionInfo">When you attach a photo or video, OMEGA uses a vision brain that runs on this device. It downloads the first time you need it.</p>
   <h3>Live info sources</h3>
@@ -111,6 +116,6 @@
   <div class="row"><button class="btn pri" id="fbSave">Save lesson</button></div>
 </div>
 
-<script type="module" src="app.js?v=24"></script>
+<script type="module" src="app.js?v=25"></script>
 </body>
 </html>
