@@ -7,7 +7,7 @@ const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.89';
 const WLLAMA_URL = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/index.js';
 const WLLAMA_WASM = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/wasm/wllama.wasm';
 const PROXY = 'https://proxy.cors.dev/';
-const VERSION = '3.4.2';
+const VERSION = '3.5.0';
 
 const MODELS = [
   { key: 'cpu-qwen3-0.6b', engine: 'cpu', name: 'Qwen3 0.6B', repo: 'unsloth/Qwen3-0.6B-GGUF', file: 'Qwen3-0.6B-Q4_K_M.gguf', sizeMB: 400, memMB: 650, thinking: true, desc: 'Recommended for phones and tablets. Runs on the processor, so it does not crash.' },
@@ -1086,6 +1086,17 @@ if (/[?&]nocloud\b/.test(location.search)) window.__omegaNoCloud = true; if (/[?
 const cloudOn = () => settings.cloud !== false && navigator.onLine !== false && !window.__omegaNoCloud;
 const cloudFree = () => !settings.cloudKey;
 const polliKey = () => /^(sk_|pk_|plln_)/.test(settings.cloudKey || ''); // a free Pollinations key (enter.pollinations.ai): faster, and the cloud can see photos
+// OMEGA's own brain switchboard (Vercel): tries free top AI brains in order (DeepSeek, Gemini, Groq, NVIDIA, OpenRouter, GLM, Mistral, Cloudflare).
+// Its keys live on the server, never in this public code. If it's not set up or all are busy, OMEGA uses the Pollinations free brain, then the phone brain.
+const HUB = 'https://omega-brain.vercel.app';
+let hub = store.get('hub', { ready: [], t: 0 });
+const hubReady = () => cloudFree() && hub.ready && hub.ready.length > 0 && Date.now() >= hubCoolUntil;
+let hubCoolUntil = 0;
+async function checkHub() {
+  try { const r = await fetch(HUB + '/api/health', { cache: 'no-store' }); const j = await r.json(); hub = { ready: Array.isArray(j.ready) ? j.ready : [], t: Date.now() }; store.set('hub', hub); } catch (e) { }
+  try { syncCloud(); } catch (e) { }
+}
+if (!window.__omegaNoCloud) { setTimeout(checkHub, 1500); setInterval(checkHub, 10 * 60 * 1000); }
 let cloudCoolUntil = 0; // after a "too many requests" from the free brain, let the phone brain answer for a bit
 let cloudAbort = null;
 // ---------------- OMEGA tests the apps and games it makes (like a developer would) ----------------
@@ -1251,14 +1262,23 @@ async function cloudChatOnce(messages, o) {
     if (cloudFree() && Date.now() < cloudCoolUntil) throw new Error('free cloud brain is busy, try again in a minute');
     const free = cloudFree();
     const busyNote = setTimeout(() => { if (o.ui && !o.got) o.ui.wt.textContent = '☁️ The free cloud brain is busy, your answer is on the way…'; }, 9000);
-    const r = polliKey()
+    const textOnly = messages.map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : m.content.filter(p => p.type === 'text').map(p => p.text).join('\n') }));
+    let hubName = '', r = null;
+    if (hubReady()) { // OMEGA's own switchboard first: the strongest free brains
+      try {
+        const h = await fetch(HUB + '/api/chat', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: textOnly, max_tokens: o.maxTokens, temperature: o.temperature }) });
+        if (h.ok && h.body) { r = h; hubName = h.headers.get('X-Omega-Provider') || 'free brain'; }
+        else { hubCoolUntil = Date.now() + (h.status === 503 ? 60000 : 15000); try { await h.body?.cancel(); } catch (_) { } }
+      } catch (e) { if (sig.aborted) throw e; hubCoolUntil = Date.now() + 15000; }
+    }
+    if (!r) r = polliKey()
       ? await fetch('https://gen.pollinations.ai/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.cloudKey }, body: JSON.stringify({ model: 'openai', messages, stream: true, max_tokens: o.maxTokens, temperature: o.temperature }) })
       : free
-      ? await fetch('https://text.pollinations.ai/openai', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'openai', messages: messages.map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : m.content.filter(p => p.type === 'text').map(p => p.text).join('\n') })), stream: true, max_tokens: o.maxTokens, temperature: o.temperature, private: true, referrer: 'omega' }) })
+      ? await fetch('https://text.pollinations.ai/openai', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'openai', messages: textOnly, stream: true, max_tokens: o.maxTokens, temperature: o.temperature, private: true, referrer: 'omega' }) })
       : await fetch('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.cloudKey, 'X-Title': 'OMEGA' },
       body: JSON.stringify({ model: settings.cloudModel || 'openrouter/free', messages, stream: true, max_tokens: o.maxTokens, temperature: o.temperature }) });
     clearTimeout(busyNote);
-    if (free && (r.status === 429 || r.status === 402)) cloudCoolUntil = Date.now() + 45000; // the free cloud's per-minute limit: let the phone brain answer for a bit
+    if (free && !hubName && (r.status === 429 || r.status === 402)) cloudCoolUntil = Date.now() + 45000; // the free cloud's per-minute limit: let the phone brain answer for a bit
     if (!r.ok) { let m = 'HTTP ' + r.status; try { const j = await r.json(); m = (j.error && j.error.message) || m; } catch (_) { } if (r.status === 401 || r.status === 403) m = 'the cloud key is not valid'; if (r.status === 402 && free) m = 'the free cloud is busy right now'; if (r.status === 429) m = 'free limit reached for now'; throw new Error(m); }
     const rd = r.body.getReader(), dec = new TextDecoder(); let buf = '', text = '', reason = '', model = '';
     while (true) {
@@ -1272,7 +1292,7 @@ async function cloudChatOnce(messages, o) {
       }
       if (stopFlag) break;
     }
-    o.model = model;
+    o.model = hubName || model;
     if (!text.trim() && !stopFlag) throw new Error('empty answer');
     return reason ? '<think>' + reason + '</think>' + text : text;
   } catch (e) { if (sig.aborted && stopFlag) return ''; if (sig.aborted) throw new Error('took too long'); throw e; }
@@ -1297,7 +1317,7 @@ async function answerInCloud(text, live, att, ui, turn, media = []) {
   }
   const hist = historyFor(20000, true); if (hist.length) hist.pop(); // the cloud sees the newest code whole, so "make the buttons bigger" works
   // the free cloud cuts each answer at about 2,800 characters: ask for compact code so most apps fit in one go
-  const compact = codeMode && cloudFree() && !polliKey() ? '\n\nKeep the html file compact so it fits in one reply: short CSS, short variable names, no comments, under about 2,500 characters if you can.' : '';
+  const compact = codeMode && cloudFree() && !polliKey() && !hubReady() ? '\n\nKeep the html file compact so it fits in one reply: short CSS, short variable names, no comments, under about 2,500 characters if you can.' : '';
   const messages = [{ role: 'system', content: systemPrompt(codeMode, !!live) + compact }, ...hist, { role: 'user', content: user }];
   const t0 = Date.now(), o = { ui, maxTokens: codeMode ? 6000 : 2000, temperature: codeMode ? 0.3 : 0.6, onText: out => { showThoughts(ui, out, t0); render(ui.ans, thinkStrip(out), true); toBottom(); } };
   render(ui.ans, '', true); if (window.OMEGA) window.OMEGA.lastPrompt = messages;
@@ -1648,7 +1668,7 @@ $('#cloudOn').onchange = e => { settings.cloud = e.target.checked; store.set('se
 $('#cloudKey').onchange = e => { settings.cloudKey = e.target.value.trim(); store.set('settings', settings); syncCloud(); };
 function syncCloud() {
   $('#cloudOn').checked = settings.cloud !== false; $('#cloudKey').value = settings.cloudKey || '';
-  $('#cloudState').textContent = settings.cloud === false ? 'Off: everything stays on this device.' : navigator.onLine === false ? 'On, but you are offline: the phone brain answers.' : settings.cloudKey ? (polliKey() ? 'On, with your Pollinations key: faster cloud answers, and it can see photos. Your messages go to Pollinations.' : 'On: answers come from free OpenRouter models when you are online. Your messages go to OpenRouter.') : 'On: answers come from a big free cloud brain (Pollinations, no key needed) when you are online. Your messages go to Pollinations. Photos and videos stay with the phone brain. Add an OpenRouter key below for cloud eyes too.';
+  $('#cloudState').textContent = settings.cloud === false ? 'Off: everything stays on this device.' : navigator.onLine === false ? 'On, but you are offline: the phone brain answers.' : !settings.cloudKey && hub.ready && hub.ready.length ? `On: answers come from OMEGA's own switchboard of free top AI brains (${hub.ready.length} ready: ${hub.ready.join(', ')}), then Pollinations, then the phone brain. Your messages go to whichever one answers.` : settings.cloudKey ? (polliKey() ? 'On, with your Pollinations key: faster cloud answers, and it can see photos. Your messages go to Pollinations.' : 'On: answers come from free OpenRouter models when you are online. Your messages go to OpenRouter.') : 'On: answers come from a big free cloud brain (Pollinations, no key needed) when you are online. Your messages go to Pollinations. Photos and videos stay with the phone brain. Add an OpenRouter key below for cloud eyes too.';
 }
 $('#autoPick').onchange = e => { settings.auto = e.target.checked; settings.skipRec = null; store.set('settings', settings); if (!chat) refreshWelcome(); };
 $('#loadBtn').onclick = () => {
