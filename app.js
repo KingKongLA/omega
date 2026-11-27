@@ -7,7 +7,7 @@ const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.89';
 const WLLAMA_URL = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/index.js';
 const WLLAMA_WASM = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/wasm/wllama.wasm';
 const PROXY = 'https://proxy.cors.dev/';
-const VERSION = '3.4.1';
+const VERSION = '3.4.2';
 
 const MODELS = [
   { key: 'cpu-qwen3-0.6b', engine: 'cpu', name: 'Qwen3 0.6B', repo: 'unsloth/Qwen3-0.6B-GGUF', file: 'Qwen3-0.6B-Q4_K_M.gguf', sizeMB: 400, memMB: 650, thinking: true, desc: 'Recommended for phones and tablets. Runs on the processor, so it does not crash.' },
@@ -807,7 +807,7 @@ function systemPrompt(codeMode, hasLive) {
   const f = facts.slice(-30).map(x => '- ' + third(x)).join('\n');
   const l = lessons.slice(-6).map(x => `- When asked "${clip(x.q, 120)}", ${name} said: ${clip(x.fix, 300)}`).join('\n');
   return [
-    `You are OMEGA, ${name}'s personal AI assistant. You are an AI, not a person, so don't pretend to have a body, a personal life or human experiences. Happily help with anything ${name} asks: questions, advice, stories, jokes, scripts, captions, plans and code. Your name is OMEGA: if asked who or what you are, say you are OMEGA, ${name}'s own AI that runs right on their device (not ChatGPT, not Claude). Talk in a casual, warm, direct way, like a helpful friend texting back. Reply to exactly what ${name} said. Short answers for simple stuff, more detail when it's needed.`,
+    `You are OMEGA, ${name}'s personal AI assistant. You are an AI, not a person, so don't pretend to have a body, a personal life or human experiences. Happily help with anything ${name} asks: questions, advice, stories, jokes, scripts, captions, plans and code. Your name is OMEGA: if asked who or what you are, say you are OMEGA, ${name}'s own AI that runs right on their device (not ChatGPT, not Claude). Talk in a casual, warm, direct way, like a helpful friend texting back. Reply to exactly what ${name} said. Short answers for simple stuff, more detail when it's needed. ${name} often types fast or uses voice-to-text, so words can come out wrong (like "accord" for "occur", or a misspelled name). Work out what ${name} most likely meant and answer that directly. Never correct the spelling and never ask "did you mean...?". Only ask a short question if you truly can't guess what was meant.`,
     `Today is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}${profile.city ? ` and ${name} is in ${profile.city}` : ''}.`,
     profile.style ? `How ${name} wants you to talk: ${profile.style}` : '',
     profile.about ? `About ${name}: ${profile.about}` : '',
@@ -1284,7 +1284,7 @@ async function answerInCloud(text, live, att, ui, turn, media = []) {
   ui.work.hidden = false; ui.wt.textContent = '☁️ Asking the cloud brain…';
   const codeMode = $('#codeChip').getAttribute('aria-pressed') === 'true';
   const files = att ? attText(att) : '';
-  const content = (live ? 'LIVE INFO (fetched just now):\n' + clip(live, 14000) + '\n\n(Use the LIVE INFO above; it is current. Copy numbers exactly. If it does not contain the exact answer, say so.)\n---\n' : '') + (files ? `Attached file(s):\n-----\n${clip(files, 30000)}\n-----\n\n` : '') + memoryHint(text) + text;
+  const content = (live ? 'LIVE INFO (fetched just now):\n' + clip(live, 14000) + '\n\n(Use the LIVE INFO above when it helps; it is current, so copy numbers exactly. For live facts (scores, prices, times, weather, news), if it does not have the exact detail, say so. For everything else, if the LIVE INFO is off-topic or empty, just answer from your own knowledge and do not mention the LIVE INFO at all.)\n---\n' : '') + (files ? `Attached file(s):\n-----\n${clip(files, 30000)}\n-----\n\n` : '') + memoryHint(text) + text;
   let user = content;
   if (media.length) {
     const parts = [];
@@ -1502,7 +1502,7 @@ async function send(opts = {}) {
     // answer
     const codeMode = $('#codeChip').getAttribute('aria-pressed') === 'true';
     const wantsApp = codeMode && /\b(app|calculator|website|web ?site|page|landing|game|tool|timer|stopwatch|to-?do|todo|tracker|form|quiz|clock|counter|converter|ui|dashboard|portfolio|menu|button)\b/i.test(text) && !/\b(python|script|terminal|command line|node|java|c\+\+|swift|sql)\b/i.test(text);
-    const userContent = (live ? 'LIVE INFO (fetched just now):\n' + clip(live, IS_PHONE && ctxNow() < 8192 ? 2400 : 5000) + '\n\n(Answer using the LIVE INFO above. It is real and current. Copy numbers, times and names exactly as written, and name the source. If it lists headlines or results, summarize the most relevant ones, and prefer the newest dated item. If the LIVE INFO does not contain the exact answer (for example a time, score or date), say you could not find that exact detail and share what you did find. Never guess numbers, times or scores.)\n---\n' : '') + (att && attText(att) ? `Here is the file the user attached (${att.files.map(f => f.name).join(', ')}):\n-----\n${clip(attText(att), Math.max(1200, (ctxNow() - 900) * 3))}\n-----\n\nUsing the file above, answer this: ` : '') + memoryHint(text) + text + (wantsApp ? '\n\n(Make it as ONE complete, working ```html file with the CSS and JavaScript inside. No input() prompts. It must work on a phone screen.)' : '');
+    const userContent = (live ? 'LIVE INFO (fetched just now):\n' + clip(live, IS_PHONE && ctxNow() < 8192 ? 2400 : 5000) + '\n\n(Answer using the LIVE INFO above. It is real and current. Copy numbers, times and names exactly as written, and name the source. If it lists headlines or results, summarize the most relevant ones, and prefer the newest dated item. If the LIVE INFO does not contain the exact answer to a live question (a time, score, price or date), say you could not find that exact detail and share what you did find. Never guess numbers, times or scores. For general questions (history, science, how things work), if the LIVE INFO is off-topic, just answer from what you know and do not mention it.)\n---\n' : '') + (att && attText(att) ? `Here is the file the user attached (${att.files.map(f => f.name).join(', ')}):\n-----\n${clip(attText(att), Math.max(1200, (ctxNow() - 900) * 3))}\n-----\n\nUsing the file above, answer this: ` : '') + memoryHint(text) + text + (wantsApp ? '\n\n(Make it as ONE complete, working ```html file with the CSS and JavaScript inside. No input() prompts. It must work on a phone screen.)' : '');
     const win = ctxNow(), big = win >= 8192;
     // keep the last code whole only when this is a change to it ("make it bigger"), not when asking for something new
     const editsCode = codeMode && !/^(?:please |can you |could you |now )?(write|create|build|code|generate|program)\b/i.test(text) && !/\b(a|an|another|new)\b[\w\s]{0,30}\b(app|game|calculator|website|site|page|tool|timer|script|program|function)\b/i.test(text) && /\b(it|its|it's|this one|the (button|buttons|color|colors|background|text|title|font|game|app|page|player|score|speed|size|code)|bigger|smaller|change|fix|add|remove|update|improve|instead|faster|slower|colou?r|rename)\b/i.test(text);
