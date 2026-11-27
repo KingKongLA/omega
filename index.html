@@ -13,7 +13,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-180.png">
-<link rel="stylesheet" href="style.css?v=34">
+<link rel="stylesheet" href="style.css?v=35">
 </head>
 <body>
 <div class="app" id="app">
@@ -105,6 +105,8 @@
   <h3>Things OMEGA remembers</h3>
   <p class="hint">Say "remember that …" in chat, or add here. OMEGA also saves clear facts you share about yourself ("I run a construction business in LA").</p>
   <label class="toggle"><input type="checkbox" id="autoMem"> Save facts about me automatically</label>
+  <label class="toggle"><input type="checkbox" id="pastChats"> Look through my past chats when I bring something up</label>
+  <p class="hint">OMEGA saves only the important stuff (who you are, your people, projects, plans, what you like). It skips questions, one-time requests and passwords. Tap Forget on anything you don't want it to keep.</p>
   <div class="row"><input type="text" id="newFact" placeholder="e.g. I post GTA clips every night at 8" style="flex:1"><button class="btn" id="addFact">Add</button></div>
   <ul class="list" id="facts"></ul>
   <h3>What OMEGA learned from your feedback</h3>
@@ -121,7 +123,7 @@
   <div class="row"><button class="btn pri" id="fbSave">Save lesson</button></div>
 </div>
 
-<script src="video.js?v=34" defer></script>
-<script type="module" src="app.js?v=34"></script>
+<script src="video.js?v=35" defer></script>
+<script type="module" src="app.js?v=35"></script>
 </body>
 </html>

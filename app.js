@@ -7,7 +7,7 @@ const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.89';
 const WLLAMA_URL = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/index.js';
 const WLLAMA_WASM = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/wasm/wllama.wasm';
 const PROXY = 'https://proxy.cors.dev/';
-const VERSION = '3.5.3';
+const VERSION = '3.6.0';
 
 const MODELS = [
   { key: 'cpu-qwen3-0.6b', engine: 'cpu', name: 'Qwen3 0.6B', repo: 'unsloth/Qwen3-0.6B-GGUF', file: 'Qwen3-0.6B-Q4_K_M.gguf', sizeMB: 400, memMB: 650, thinking: true, desc: 'Recommended for phones and tablets. Runs on the processor, so it does not crash.' },
@@ -829,7 +829,7 @@ function systemPrompt(codeMode, hasLive) {
   const who = profile.name || 'the user';
   // facts are saved in the user's words ("my team is the Rams"); rewrite them so the brain doesn't think "my" means itself
   const third = x => String(x).replace(/\bI am\b|\bI'm\b/gi, who + ' is').replace(/\bI have\b|\bI've\b/gi, who + ' has').replace(/\bmy\b/gi, who + "'s").replace(/\bmine\b/gi, who + "'s").replace(/\bI\b/g, who).replace(/\bme\b/gi, who);
-  const f = facts.slice(-30).map(x => '- ' + third(x)).join('\n');
+  const f = facts.slice(-40).map(x => '- ' + third(x)).join('\n');
   const l = lessons.slice(-6).map(x => `- When asked "${clip(x.q, 120)}", ${name} said: ${clip(x.fix, 300)}`).join('\n');
   return [
     `You are OMEGA, ${name}'s personal AI assistant. You are an AI, not a person, so don't pretend to have a body, a personal life or human experiences. Happily help with anything ${name} asks: questions, advice, stories, jokes, scripts, captions, plans and code. Your name is OMEGA: if asked who or what you are, say you are OMEGA, ${name}'s own AI that runs right on their device (not ChatGPT, not Claude). Talk in a casual, warm, direct way, like a helpful friend texting back. Reply to exactly what ${name} said. Short answers for simple stuff, more detail when it's needed. ${name} often types fast or uses voice-to-text, so words can come out wrong (like "accord" for "occur", or a misspelled name). Work out what ${name} most likely meant and answer that directly. Never correct the spelling and never ask "did you mean...?". Only ask a short question if you truly can't guess what was meant.`,
@@ -844,7 +844,58 @@ function systemPrompt(codeMode, hasLive) {
 }
 // questions about yourself ("what business do I run?"): hand the brain the matching saved facts right next to the question
 const STOPW = new Set('the a an i my me is are was do does did what which who how when where why you your of to in on for and or it at with about again'.split(' '));
+// ---- remembering past chats: when you bring up something from another chat, OMEGA looks through your old chats ----
+const PAST_CUE = /\b(remember|recall|last time|earlier|before|previous(ly)?|we (talked|discussed|spoke|said|were|did|made|decided|planned|worked)|you (said|told|suggested|recommended|made|wrote|gave|helped)|i (told|said|asked|mentioned|showed|gave) you|other chat|another chat|old chat|that (chat|convo|conversation)|yesterday|last (week|night|month)|this morning|continue|pick up|left off|again|our|the (one|thing|idea|plan|game|app|script|video) (we|you|i))\b/i;
+const PAST_STOP = new Set([...STOPW, 'remember', 'recall', 'talked', 'talk', 'said', 'told', 'tell', 'last', 'time', 'earlier', 'before', 'chat', 'chats', 'convo', 'conversation', 'yesterday', 'week', 'night', 'month', 'morning', 'can', 'could', 'would', 'should', 'that', 'this', 'thing', 'stuff', 'we', 'our', 'us', 'bro', 'hey', 'yo', 'like', 'just', 'know', 'think', 'remind', 'again', 'other', 'another', 'previous', 'discussed', 'mentioned', 'asked', 'gave', 'made', 'did', 'have', 'had', 'has', 'there', 'then', 'them', 'they', 'one', 'some', 'any', 'get', 'got', 'want', 'need', 'please', 'make', 'help', 'continue', 'left', 'off', 'pick', 'were', 'been', 'from', 'into', 'still', 'also', 'okay', 'ok']);
+function pastWindow(text) {
+  const day = 864e5, now = new Date(), start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  if (/\byesterday\b/i.test(text)) return [start - day, start];
+  if (/\b(today|this morning|earlier today)\b/i.test(text)) return [start, Infinity];
+  if (/\blast night\b/i.test(text)) return [start - day, start + 6 * 36e5];
+  if (/\b(last|this|past) week\b/i.test(text)) return [start - 8 * day, Infinity];
+  if (/\b(last|this|past) month\b/i.test(text)) return [start - 32 * day, Infinity];
+  return null;
+}
+function searchPast(text) {
+  const others = chats.filter(c => (!chat || c.id !== chat.id) && c.turns && c.turns.length);
+  if (!others.length) return null;
+  const win = pastWindow(text), inWin = c => !win || ((c.u || c.t || 0) >= win[0] && (c.u || c.t || 0) < win[1]);
+  const words = [...new Set((text.toLowerCase().match(/[a-z0-9']{3,}/g) || []).map(w => w.replace(/'s$/, '')).filter(w => !PAST_STOP.has(w)))];
+  const stem = w => w.length > 4 ? w.replace(/(ing|ed|es|s)$/, '') : w;
+  const terms = words.map(stem);
+  const df = t => others.filter(c => c.turns.some(x => String(x.text || '').toLowerCase().includes(t))).length;
+  const idf = Object.fromEntries(terms.map(t => [t, Math.log(1 + others.length / (1 + df(t)))]));
+  const scored = [];
+  for (const c of others) {
+    if (!inWin(c)) continue;
+    let best = null, total = 0, hit = new Set();
+    c.turns.forEach((t, i) => {
+      const s = String(t.text || '').toLowerCase(); let sc = 0;
+      for (const w of terms) if (s.includes(w)) { sc += idf[w] * (t.role === 'user' ? 1.3 : 1); hit.add(w); }
+      total += sc; if (sc > 0 && (!best || sc > best.sc)) best = { i, sc };
+    });
+    const title = (c.title || '').toLowerCase(); for (const w of terms) if (title.includes(w)) { total += 2 * idf[w]; hit.add(w); }
+    if (terms.length ? hit.size : win) scored.push({ c, best, score: terms.length ? total * (hit.size / terms.length + 0.3) : (c.u || c.t || 0), hits: hit.size });
+  }
+  scored.sort((x, y) => y.score - x.score);
+  const top = scored.slice(0, 3).filter((x, k) => !terms.length || (x.hits >= Math.min(2, terms.length) || k === 0 && x.hits >= 1));
+  if (!top.length) return null;
+  const when = c => new Date(c.u || c.t || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const one = t => clip(String(t.text || '').replace(/```[\s\S]*?```/g, '[code]').replace(/\s+/g, ' '), 320);
+  const notes = top.map(({ c, best }) => {
+    let lines;
+    if (best) { const i = best.i, q = c.turns[c.turns[i].role === 'user' ? i : Math.max(0, i - 1)], a2 = c.turns[c.turns[i].role === 'user' ? i + 1 : i]; lines = [q && q.role === 'user' ? 'User: ' + one(q) : '', a2 && a2.role !== 'user' ? 'You (OMEGA): ' + one(a2) : ''].filter(Boolean); }
+    else lines = c.turns.filter(t => t.role === 'user').slice(0, 3).map(t => 'User: ' + one(t));
+    return `Chat "${clip(c.title || 'untitled', 60)}" (${when(c)}):\n${lines.join('\n')}`;
+  });
+  return { text: notes.join('\n\n'), found: top.map(x => `"${clip(x.c.title || 'a chat', 34)}" (${when(x.c)})`), strong: !!top[0].hits && top[0].hits >= Math.min(3, terms.length) };
+}
+let pastNote = ''; // what OMEGA found in your old chats for the message being answered
 function memoryHint(text) {
+  const past = pastNote ? `(From your past chats with me, in case it helps. Use it if the user is talking about it; do not mention chats that aren't relevant:\n${pastNote})\n\n` : '';
+  return past + memoryHint0(text);
+}
+function memoryHint0(text) {
   if (!/\b(i|my|me|mine)\b/i.test(text) || !facts.length) return '';
   const words = text.toLowerCase().match(/[a-z']{3,}/g) || []; const key = words.filter(w => !STOPW.has(w));
   const scored = facts.map(f => ({ f, n: key.filter(w => f.toLowerCase().includes(w.replace(/s$/, ''))).length })).filter(x => x.n > 0).sort((a, b) => b.n - a.n).slice(0, 3);
@@ -1557,7 +1608,9 @@ async function send(opts = {}) {
       await answerWithEyes(text, att, media, ui, turn); return;
     }
     // memory command
-    const rem = text.match(/^(?:please\s+)?(?:remember|don'?t forget)(?:\s+that)?[:,]?\s+(.{3,})$/i);
+    // "remember that I..." saves it; "remember the plan we talked about?" is a question about the past, not a save
+    const rem = /\?/.test(text) || /^(?:please\s+)?(?:do you\s+)?remember\s+(?:when|what|how|where|who|why|the time|that time|we|our|you|us|the \w+ (?:we|you|i))\b/i.test(text) ? null : text.match(/^(?:please\s+)?(?:remember|don'?t forget)(?:\s+that)?[:,]?\s+(.{3,})$/i);
+    if (rem) turn.noMem = true;
     if (rem) { const f = rem[1].replace(/[.!]+$/, ''); facts.push(f); facts = facts.slice(-100); store.set('facts', facts); renderFacts(); }
     // well-known games: use OMEGA's tested game library (the phone brain is too small to write a whole game reliably)
     // learn the basics automatically: name and city
@@ -1565,7 +1618,7 @@ async function send(opts = {}) {
     if (nm && !/^(not|just|so|the|a)$/i.test(nm[1])) { profile.name = nm[1][0].toUpperCase() + nm[1].slice(1); store.set('profile', profile); fillProfile(); }
     if (ct && !NOT_PLACE.test(ct[1])) { profile.city = PLACE_ALIASES[ct[1].trim().toLowerCase()] || ct[1].trim(); store.set('profile', profile); fillProfile(); }
     // auto-memory (like ChatGPT's "Memory updated"): save clear facts about yourself, e.g. "I run a construction business in LA"
-    if (!rem && settings.autoMemory !== false && !/\?\s*$/.test(text)) {
+    if (!rem && settings.autoMemory !== false && !cloudOn() && !/\?\s*$/.test(text)) {
       const found = [];
       for (const part of text.split(/(?<=[.!])\s+|\s+(?:and|but)\s+(?=i\b|my\b)/i)) {
         const m = part.match(/^(?:yo|hey|so|btw|also|ok|okay|well|no|nah|nope|actually)?[,\s]*((?:i (?:run|own|work (?:at|as|for)|am a|'m a|am an|'m an|have (?:a|an|two|three|\d+)|drive|study|go to|play|like|love|hate|prefer|can't eat|don't eat|am allergic)|my (?:\w+ ){0,2}(?:is|are|was born))\b.{2,90})$/i);
@@ -1612,7 +1665,8 @@ async function send(opts = {}) {
     // live info first, so OMEGA can still help even if the brain can't start
     let live = '', liveShown = '';
     if (settings.live && !rem) {
-      const tools = navigator.onLine === false || att ? [] : decideTools(text); // no internet (or a file to read): skip live info
+      const aboutPast = /\b(you (said|told|gave|suggested|recommended|made|wrote|showed)( me)?|did you (say|tell|give|suggest|recommend|make|write|show)|we (talked|discussed|said|decided|planned|were talking)|(in|from) (the|our|another|other|that|my) (old |last )?(chat|convo|conversation)|last time (we|you|i))\b/i.test(text) && chats.length > 1; // about our old chats, not the internet
+      const tools = navigator.onLine === false || att || aboutPast ? [] : decideTools(text); // no internet (or a file to read): skip live info
       if (tools.length) {
         ui.work.hidden = false; ui.wt.textContent = 'Checking live info: ' + tools.map(t => t[0]).join(', ') + '…';
         const q40 = clip(cleanQuery(text) || text, 48);
@@ -1632,6 +1686,15 @@ async function send(opts = {}) {
         step(ui, ok.length ? `✓ Got live info${turn.sources.length ? ` from ${turn.sources.length} source${turn.sources.length === 1 ? '' : 's'}` : ''}` : '⚠️ Live info was unavailable');
         if (!ok.length && res.length && tools.some(t => t[0] !== 'web')) live = 'LIVE INFO: the lookup failed just now (no internet or sources busy). Tell the user you could not get live info this time.';
       }
+    }
+    pastNote = '';
+    if (!rem && !att && settings.pastChats !== false && chats.length > 1) {
+      const cue = PAST_CUE.test(text);
+      const found = (cue || /\b(my|our)\b/i.test(text)) ? searchPast(text) : null;
+      if (found && (cue || found.strong)) {
+        ui.work.hidden = false; step(ui, '🧠 Checking your past chats');
+        pastNote = clip(found.text, 2600); step(ui, `✓ Found it in ${found.found.slice(0, 2).join(' and ')}`);
+      } else if (cue && /\b(remember|we talked|other chat|last time|you said)\b/i.test(text)) { ui.work.hidden = false; step(ui, '🧠 Checking your past chats'); step(ui, '· Nothing about that in your past chats'); }
     }
     if (stopFlag) { turn.text = liveShown ? (turn.live ? 'Stopped. The live info is in the card above.' : liveShown) : '(stopped)'; render(ui.ans, turn.text); return; }
     // brain
@@ -1752,7 +1815,35 @@ async function send(opts = {}) {
     if ((ui.steps && ui.steps.length) || ui._th) { showThoughts(ui, null, ui._t0, true); if (ui.steps && ui.steps.length) turn.steps = ui.steps.slice(0, 30); }
     ui.work.classList.add('done'); // finished: stop the little spinner next to the status line
     saveChats(); setBusy(false); toBottom();
+    if (turn.text && !stopFlag && !turn.noMem && settings.autoMemory !== false && cloudOn() && !window.__omegaNoMemory) smartMemory(text, turn, ui).catch(() => { });
   }
+}
+// ---- smart memory (like ChatGPT and Claude): after you talk, a big brain decides what's worth remembering ----
+async function smartMemory(text, turn, ui) {
+  if (text.split(/\s+/).length < 4 || !/\b(i|i'm|im|i've|my|me|mine|we|our|us|forget|remember)\b/i.test(text)) return; // nothing about you in it
+  const name = profile.name || 'the user';
+  const sys = `You manage long-term memory for ${name}'s personal AI assistant, OMEGA. Read ${name}'s latest message and decide what, if anything, is worth remembering for FUTURE chats.
+SAVE only lasting things ${name} said about themselves or their life: name, age, job, school, where they live, people in their life (and their names), pets, ongoing projects and businesses, goals, plans with dates, strong likes and dislikes, and how they want OMEGA to talk or act. Also save anything they clearly ask you to remember.
+DO NOT save: questions, one-time requests or tasks ("make me a game"), passing moods ("I'm tired"), small talk, anything OMEGA said or looked up, guesses, passwords, API keys, card or ID numbers. When unsure, don't save.
+Write each memory as one short line in ${name}'s own voice, starting with "I" or "My" (e.g. "I run a construction business in LA", "My sister is Ana"). Combine related details in one line. If a new fact changes an existing memory, put it in "update" with the old line copied exactly. If ${name} asks to forget something, put the existing line in "forget".
+Reply with JSON only: {"add":[],"update":[{"old":"","new":""}],"forget":[]}`;
+  const mem = facts.length ? facts.map(f => '- ' + f).join('\n') : '(none yet)';
+  const user = `Existing memories:\n${clip(mem, 6000)}\n\n${name}'s latest message:\n${clip(text, 1500)}\n\n(OMEGA's reply, for context only, never save it: ${clip(turn.text, 500)})`;
+  const o = { maxTokens: 400, temperature: 0.1, onText: () => { } };
+  const out = thinkStrip(await cloudChat([{ role: 'system', content: sys }, { role: 'user', content: user }], o));
+  const j = out.match(/\{[\s\S]*\}/); if (!j) return;
+  let r; try { r = JSON.parse(j[0]); } catch (_) { return; }
+  const ok = s => typeof s === 'string' && s.trim().length >= 6 && s.length <= 220 && !/(sk-|AIza|gsk_|password|\b\d{12,}\b)/i.test(s);
+  const low = s => s.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
+  const changed = [];
+  for (const f of (Array.isArray(r.forget) ? r.forget : [])) { const i = facts.findIndex(x => low(x) === low(String(f))); if (i >= 0) { facts.splice(i, 1); changed.push('forgot: ' + clip(String(f), 60)); } }
+  for (const u of (Array.isArray(r.update) ? r.update : [])) { if (!u || !ok(u.new)) continue; const i = facts.findIndex(x => low(x) === low(String(u.old || ''))); if (i >= 0) facts[i] = u.new.trim(); else if (!facts.some(x => low(x) === low(u.new))) facts.push(u.new.trim()); changed.push(clip(u.new.trim(), 80)); }
+  const gone = (Array.isArray(r.forget) ? r.forget : []).map(x => low(String(x)));
+  for (const f of (Array.isArray(r.add) ? r.add : [])) { if (!ok(f) || facts.some(x => low(x) === low(f)) || gone.includes(low(f))) continue; facts.push(f.trim()); changed.push(clip(f.trim(), 80)); }
+  if (!changed.length) return;
+  facts = facts.slice(-150); store.set('facts', facts); renderFacts();
+  turn.memo = (turn.memo || []).concat(changed); saveChats();
+  if (ui && ui.ans && ui.ans.isConnected) { const old = ui.ans.parentNode && ui.ans.parentNode.querySelector('.memo'); if (old) old.remove(); const mm = document.createElement('div'); mm.className = 'hint memo'; mm.textContent = '🧠 Memory updated: ' + turn.memo.join(' · '); ui.ans.after(mm); }
 }
 
 // ---------------- chats ----------------
@@ -1886,6 +1977,8 @@ $('#lessons').onclick = e => { const i = e.target.dataset.l; if (i == null) retu
 $('#addFact').onclick = () => { const v = $('#newFact').value.trim(); if (!v) return; facts.push(v); store.set('facts', facts); $('#newFact').value = ''; renderFacts(); };
 $('#autoMem').checked = settings.autoMemory !== false;
 $('#autoMem').onchange = e => { settings.autoMemory = e.target.checked; store.set('settings', settings); };
+$('#pastChats').checked = settings.pastChats !== false;
+$('#pastChats').onchange = e => { settings.pastChats = e.target.checked; store.set('settings', settings); };
 $('#newFact').addEventListener('keydown', e => { if (e.key === 'Enter') $('#addFact').click(); });
 
 // feedback
