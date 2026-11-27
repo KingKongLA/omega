@@ -7,7 +7,7 @@ const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.89';
 const WLLAMA_URL = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/index.js';
 const WLLAMA_WASM = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/wasm/wllama.wasm';
 const PROXY = 'https://proxy.cors.dev/';
-const VERSION = '3.4.0';
+const VERSION = '3.4.1';
 
 const MODELS = [
   { key: 'cpu-qwen3-0.6b', engine: 'cpu', name: 'Qwen3 0.6B', repo: 'unsloth/Qwen3-0.6B-GGUF', file: 'Qwen3-0.6B-Q4_K_M.gguf', sizeMB: 400, memMB: 650, thinking: true, desc: 'Recommended for phones and tablets. Runs on the processor, so it does not crash.' },
@@ -1168,7 +1168,7 @@ async function editVideo(text, files, ui, turn) {
     const rc = rules.ops.find(o => o.op === 'captions'), pc = plan.ops.find(o => o && o.op === 'captions'); if (rc && pc) pc.style = rc.style; else if (rc && !pc) plan.ops.push(rc); }
   plan = V.cleanPlan(plan, { duration: vids[0] && vids[0].duration });
   if (!plan.ops.length && !plan.transcript && !(plan.merge && vids.length > 1) && !(imgs.length && !vids.length) && plan.output === 'mp4' && !plan.compress) {
-    turn.text = 'I can edit that! Tell me what to do, for example:\n- "cut the first 3 seconds"\n- "make it vertical for TikTok"\n- "add text \"DAY 1\" at the top"\n- "speed it up 2x" or "slow motion"\n- "mute it", "make it black and white", "turn it into a GIF"\n- "add captions" (it writes down what is said, TikTok style)\n- "transcribe it" to get the words\n- attach 2–3 clips and say "merge these"';
+    turn.text = 'I can edit that! Tell me what to do, for example:\n- "cut the first 3 seconds"\n- "make it vertical for TikTok" (add "blur the background" to keep the whole picture)\n- "add text \"DAY 1\" at the top"\n- "speed it up 2x" or "slow motion"\n- "mute it", "make it black and white", "turn it into a GIF"\n- "add captions" (it writes down what is said, TikTok style)\n- "transcribe it" to get the words\n- attach 2–3 clips and say "merge these"';
     ui.wt.textContent = '🎬 Video editor'; render(ui.ans, turn.text); return;
   }
   const t0 = Date.now();
@@ -1201,7 +1201,7 @@ async function editVideo(text, files, ui, turn) {
     if (stopFlag) { turn.text = '(stopped)'; render(ui.ans, turn.text); return; }
     turn.text = `I couldn't finish that edit: ${e.message}. Try a shorter clip, or ask for one change at a time.`;
     render(ui.ans, turn.text);
-  } finally { if (IS_PHONE) V.release().catch(() => { }); }
+  } finally { V.release().catch(() => { }); } // free the editor's memory after every job (it restarts in a second next time)
 }
 // The free cloud stops each answer after about 800 words-pieces. For long answers (whole apps and games),
 // OMEGA asks it to keep going and stitches the parts together, so the code comes out complete.

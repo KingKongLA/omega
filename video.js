@@ -38,7 +38,7 @@
     const n = parseFloat(m[1]);
     return /^m/.test(m[2] || '') ? n * 60 : n;
   }
-  const WORDS = /\b(subtitles?|captions?|transcribe|transcript|(?:he|she|they|people) (?:say|says|said|saying)|keep|only from|from \d|between \d|put|wide|trim|cut|clip|shorten|shorter|crop|speed|faster|slow|slo-?mo|mute|sound|audio|volume|louder|quieter|vertical|9:16|tiktok|reels?|shorts|square|1:1|16:9|horizontal|landscape|youtube|caption|captions|text|title|subtitle|gif|compress|smaller|shrink|mp3|merge|combine|join|stitch|reverse|backwards?|rotate|flip|mirror|black and white|b&w|grayscale|greyscale|fade|brighter|brighten|pop|edit|first \d|last \d|seconds?|slideshow|montage|music video|make (a|me a)? ?video)\b/i;
+  const WORDS = /\b(zoom|blur|subtitles?|captions?|transcribe|transcript|(?:he|she|they|people) (?:say|says|said|saying)|keep|only from|from \d|between \d|put|wide|trim|cut|clip|shorten|shorter|crop|speed|faster|slow|slo-?mo|mute|sound|audio|volume|louder|quieter|vertical|9:16|tiktok|reels?|shorts|square|1:1|16:9|horizontal|landscape|youtube|caption|captions|text|title|subtitle|gif|compress|smaller|shrink|mp3|merge|combine|join|stitch|reverse|backwards?|rotate|flip|mirror|black and white|b&w|grayscale|greyscale|fade|brighter|brighten|pop|edit|first \d|last \d|seconds?|slideshow|montage|music video|make (a|me a)? ?video)\b/i;
 
   function wantsEdit(text, files) {
     const vids = files.filter(f => f.kind === 'video'), imgs = files.filter(f => f.kind === 'image');
@@ -61,15 +61,17 @@
     else if ((m = t.match(new RegExp('(?:keep|only|just)?\\s*(?:the\\s+)?last\\s+' + T)))) p.ops.push({ op: 'keepLast', len: secs(m[1]) });
     if ((m = t.match(new RegExp('(?:cut|remove|delete|drop|get rid of)\\s+(?:out\\s+)?(?:the\\s+part\\s+)?(?:from\\s+)?' + T + '\\s*(?:to|-|until|and)\\s*' + T)))) p.ops.push({ op: 'cut', start: secs(m[1]), end: secs(m[2]) });
     else if ((m = t.match(new RegExp('(?:from|between)\\s+' + T + '\\s*(?:to|-|until|and)\\s*' + T)))) p.ops.push({ op: 'trim', start: secs(m[1]), end: secs(m[2]) });
-    if ((m = t.match(/(\d+(?:\.\d+)?)\s*x\b/)) && !/\b\d+\s*x\s*\d+/.test(t)) p.ops.push({ op: 'speed', x: parseFloat(m[1]) });
+    if ((m = t.match(/(?<!zoom(?:ed)?(?: it)? in )(?<!zoom )(?<![\d.])\b(\d+(?:\.\d+)?)\s*x\b/)) && !/\b\d+\s*x\s*\d+/.test(t)) p.ops.push({ op: 'speed', x: parseFloat(m[1]) });
     else if (/\b(slow[\s-]?mo|slow motion|slow (it )?down|slower|half speed)\b/.test(t)) p.ops.push({ op: 'speed', x: 0.5 });
     else if (/\b(speed (it )?up|faster|double speed|timelapse|time-lapse)\b/.test(t)) p.ops.push({ op: 'speed', x: /double/.test(t) ? 2 : 1.5 });
     if (/\b(mute|no sound|no audio|remove (the )?(sound|audio)|without (sound|audio)|silent)\b/.test(t)) p.ops.push({ op: 'mute' });
     else if (/\b(louder|turn (it|the (sound|volume)) up|boost (the )?(sound|audio|volume))\b/.test(t)) p.ops.push({ op: 'volume', x: 2 });
     else if (/\b(quieter|softer|turn (it|the (sound|volume)) down|lower (the )?volume)\b/.test(t)) p.ops.push({ op: 'volume', x: 0.5 });
-    if (/\b(vertical|9:16|9x16|portrait|tiktok|reels?|shorts|stories)\b/.test(t)) p.ops.push({ op: 'frame', shape: 'vertical' });
-    else if (/\b(square|1:1|instagram post)\b/.test(t)) p.ops.push({ op: 'frame', shape: 'square' });
+    const fitBlur = /\b(blur(red)?( the)? background|blurry background|don'?t crop|no crop|without cropping|keep (the )?(whole|full|entire) (video|thing|screen)|fit (it|the whole)|whole video|full video|letterbox)\b/.test(t);
+    if (/\b(vertical|9:16|9x16|portrait|tiktok|reels?|shorts|stories)\b/.test(t)) p.ops.push({ op: 'frame', shape: 'vertical', fit: fitBlur ? 'blur' : 'crop' });
+    else if (/\b(square|1:1|instagram post)\b/.test(t)) p.ops.push({ op: 'frame', shape: 'square', fit: fitBlur ? 'blur' : 'crop' });
     else if (/\b(horizontal|landscape|16:9|wide|widescreen|youtube video)\b/.test(t)) p.ops.push({ op: 'frame', shape: 'wide' });
+    if ((m = t.match(/\bzoom(?:ed)?(?: it)? in(?: (\d(?:\.\d+)?)\s*x)?\b/))) p.ops.push({ op: 'zoom', x: m[1] ? parseFloat(m[1]) : 1.4 });
     if (/\b(black and white|b&w|grayscale|greyscale|black & white)\b/.test(t)) p.ops.push({ op: 'bw' });
     if (/\b(brighter|brighten|make (it|the colou?rs?) pop|more colou?r|vibrant|enhance)\b/.test(t)) p.ops.push({ op: 'pop' });
     if (/\b(reverse|backwards?|rewind)\b/.test(t)) p.ops.push({ op: 'reverse' });
@@ -103,7 +105,8 @@ Each op is one of:
 {"op":"cut","start":sec,"end":sec}    remove the part between start and end
 {"op":"speed","x":0.25-4}             2 = twice as fast, 0.5 = slow motion
 {"op":"mute"}  {"op":"volume","x":0.1-4}
-{"op":"frame","shape":"vertical"|"square"|"wide"}   vertical = 9:16 for TikTok/Reels/Shorts
+{"op":"frame","shape":"vertical"|"square"|"wide","fit":"crop"|"blur"}   vertical = 9:16 for TikTok/Reels/Shorts; fit "blur" keeps the whole video with a blurred background (when they say don't crop / blur background)
+{"op":"zoom","x":1.1-4}   zoom in on the middle
 {"op":"text","text":"...","pos":"top"|"center"|"bottom","start":sec,"end":sec}
 {"op":"captions","style":"tiktok"|"classic"}   automatic captions/subtitles of what is said in the video
 {"op":"bw"} {"op":"pop"} {"op":"reverse"} {"op":"flip"} {"op":"rotate","deg":90|180|270} {"op":"fade"}
@@ -122,7 +125,8 @@ Times are in seconds from the start of the ORIGINAL video. Use only what the use
         case 'cut': { const s = num(o.start, 0, 36000), e = num(o.end, 0, 36000); if (s != null && e != null && e > s) out.ops.push({ op: 'cut', start: s, end: e }); break; }
         case 'speed': { const x = num(o.x, 0.25, 4); if (x && x !== 1) out.ops.push({ op: 'speed', x }); break; }
         case 'volume': { const x = num(o.x, 0.05, 4); if (x) out.ops.push({ op: 'volume', x }); break; }
-        case 'frame': if (['vertical', 'square', 'wide'].includes(o.shape)) out.ops.push({ op: 'frame', shape: o.shape }); break;
+        case 'frame': if (['vertical', 'square', 'wide'].includes(o.shape)) out.ops.push({ op: 'frame', shape: o.shape, fit: o.fit === 'blur' ? 'blur' : 'crop' }); break;
+        case 'zoom': { const x = num(o.x, 1.05, 4); if (x) out.ops.push({ op: 'zoom', x }); break; }
         case 'text': { const tx = String(o.text || '').replace(/\s+/g, ' ').trim().slice(0, 90); if (tx) out.ops.push({ op: 'text', text: tx, pos: ['top', 'center', 'bottom'].includes(o.pos) ? o.pos : 'bottom', start: num(o.start, 0, 36000), end: num(o.end, 0, 36000) }); break; }
         case 'rotate': out.ops.push({ op: 'rotate', deg: [90, 180, 270].includes(+o.deg) ? +o.deg : 90 }); break;
         case 'captions': if (!out.ops.some(x => x.op === 'captions')) out.ops.push({ op: 'captions', style: o.style === 'classic' ? 'classic' : 'tiktok' }); break;
@@ -267,11 +271,15 @@ Times are in seconds from the start of the ORIGINAL video. Use only what the use
     const rot = has('rotate');
     if (rot) { if (rot.deg === 90) vf.push('transpose=1'); else if (rot.deg === 270) vf.push('transpose=2'); else vf.push('transpose=1,transpose=1'); if (rot.deg !== 180) [W, H] = [H, W]; }
     if (has('flip')) vf.push('hflip');
+    const zm = has('zoom'); if (zm) { vf.push(`crop=trunc(iw/${zm.x}/2)*2:trunc(ih/${zm.x}/2)*2`); W = Math.floor(W / zm.x / 2) * 2; H = Math.floor(H / zm.x / 2) * 2; }
     const fr = has('frame') || (opt.shape ? { shape: opt.shape } : null);
     const maxEdge = plan.output === 'gif' ? 480 : plan.compress ? 854 : 1280; // phones edit faster at 720p
     if (fr) {
       const ar = fr.shape === 'vertical' ? 9 / 16 : fr.shape === 'square' ? 1 : 16 / 9;
-      if (opt.pad) { // merging: fit inside without cutting
+      if (fr.fit === 'blur' && !opt.pad) { // keep the whole video, fill the rest with a blurred copy (popular for gaming clips)
+        const tw = ar >= 1 ? maxEdge : even(maxEdge * ar), th = ar >= 1 ? even(maxEdge / ar) : maxEdge;
+        vf.push(`split[bga][fga];[bga]scale=${tw}:${th}:force_original_aspect_ratio=increase,crop=${tw}:${th},boxblur=20:2,eq=brightness=-0.08[bgb];[fga]scale=${tw}:${th}:force_original_aspect_ratio=decrease[fgb];[bgb][fgb]overlay=(W-w)/2:(H-h)/2`, 'setsar=1'); W = tw; H = th;
+      } else if (opt.pad) { // merging: fit inside without cutting
         const tw = ar >= 1 ? maxEdge : even(maxEdge * ar), th = ar >= 1 ? even(maxEdge / ar) : maxEdge;
         vf.push(`scale=${tw}:${th}:force_original_aspect_ratio=decrease`, `pad=${tw}:${th}:(ow-iw)/2:(oh-ih)/2:color=black`, 'setsar=1'); W = tw; H = th;
       } else {
@@ -282,7 +290,7 @@ Times are in seconds from the start of the ORIGINAL video. Use only what the use
     }
     if (Math.max(W, H) > maxEdge) { const k = maxEdge / Math.max(W, H); W = even(W * k); H = even(H * k); }
     W = even(W); H = even(H);
-    if (!(fr && opt.pad)) vf.push(`scale=${W}:${H}`, 'setsar=1');
+    if (!(fr && (opt.pad || fr.fit === 'blur'))) vf.push(`scale=${W}:${H}`, 'setsar=1');
     if (has('bw')) vf.push('hue=s=0');
     if (has('pop')) vf.push('eq=brightness=0.04:contrast=1.08:saturation=1.3');
     if (speed !== 1) { vf.push(`setpts=PTS/${speed}`); if (info.audio) af.push(...atempo(speed)); }
@@ -457,7 +465,8 @@ Times are in seconds from the start of the ORIGINAL video. Use only what the use
       if (o.op === 'speed') say.push(o.x > 1 ? `sped it up ${o.x}x` : `slowed it to ${o.x}x`);
       if (o.op === 'mute') say.push('removed the sound');
       if (o.op === 'volume') say.push(o.x > 1 ? 'made it louder' : 'made it quieter');
-      if (o.op === 'frame') say.push(o.shape === 'vertical' ? 'made it vertical (9:16) for TikTok/Reels' : o.shape === 'square' ? 'made it square' : 'made it wide (16:9)');
+      if (o.op === 'frame') say.push((o.shape === 'vertical' ? 'made it vertical (9:16) for TikTok/Reels' : o.shape === 'square' ? 'made it square' : 'made it wide (16:9)') + (o.fit === 'blur' ? ' with a blurred background so nothing gets cut off' : ''));
+      if (o.op === 'zoom') say.push(`zoomed in ${o.x}x`);
       if (o.op === 'text') say.push(`added the text "${o.text}"`);
       if (o.op === 'bw') say.push('made it black and white');
       if (o.op === 'pop') say.push('made the colors pop');
