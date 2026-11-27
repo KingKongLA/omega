@@ -7,7 +7,7 @@ const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.89';
 const WLLAMA_URL = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/index.js';
 const WLLAMA_WASM = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/wasm/wllama.wasm';
 const PROXY = 'https://proxy.cors.dev/';
-const VERSION = '3.5.2';
+const VERSION = '3.5.3';
 
 const MODELS = [
   { key: 'cpu-qwen3-0.6b', engine: 'cpu', name: 'Qwen3 0.6B', repo: 'unsloth/Qwen3-0.6B-GGUF', file: 'Qwen3-0.6B-Q4_K_M.gguf', sizeMB: 400, memMB: 650, thinking: true, desc: 'Recommended for phones and tablets. Runs on the processor, so it does not crash.' },
@@ -1141,16 +1141,39 @@ function cloudProvider() {
 function keyProvider(key, forceFree) {
   const k = (key || '').trim();
   if (!k || forceFree) return 'free';
+  const m = (settings.keyMeta || {})[k]; if (m && m.prov && m.prov !== 'auto') return m.prov; // you picked it in Settings
+  return guessProvider(k);
+}
+function guessProvider(k) {
   if (/^sk-or-/.test(k)) return 'openrouter';
+  if (/^sk-ant-/.test(k)) return 'anthropic';
+  if (/^nvapi-/.test(k)) return 'nvidia';
+  if (/^hf_/.test(k)) return 'huggingface';
+  if (/^xai-/.test(k)) return 'xai';
+  if (/^sk-[0-9a-f]{32}$/.test(k)) return 'deepseek';  // DeepSeek keys: sk- and 32 letters/numbers
   if (/^csk-/.test(k)) return 'cerebras';   // Cerebras (free tier): very fast
   if (/^sk-(proj-|svcacct-)?[A-Za-z0-9_-]{20,}$/.test(k) && !/^sk-ant-/.test(k)) return 'openai';
   if (/^AIza/.test(k)) return 'gemini';     // Google AI Studio (free tier): smart, sees photos, thinks out loud
   if (/^gsk_/.test(k)) return 'groq';       // Groq (free tier): super fast big open models
   if (/^(sk_|pk_|plln_)/.test(k)) return 'polli';
-  return 'openrouter';                       // sk-or-...: free models incl. DeepSeek
+  if (/^[0-9a-f]{32}\.[A-Za-z0-9]{10,}$/.test(k)) return 'glm';
+  if (/^(tgp_v1_)?[0-9a-f]{64}$/.test(k)) return 'together';
+  if (/^[A-Za-z0-9]{32}$/.test(k)) return 'mistral';
+  return 'unknown';
 }
-const cloudSees = () => ['gemini', 'polli', 'openrouter', 'openai'].includes(cloudProvider()) || cloudKeys().some(k => ['gemini', 'polli', 'openrouter', 'openai'].includes(keyProvider(k))); // can it look at photos itself?
-const CLOUD_NAME = { free: 'the free cloud brain', gemini: 'Gemini', groq: 'Groq', polli: 'Pollinations', openrouter: 'OpenRouter', openai: 'ChatGPT (OpenAI)', cerebras: 'Cerebras' };
+const keyName = k => { const m = (settings.keyMeta || {})[k]; return (m && m.name) || CLOUD_NAME[keyProvider(k)] || 'Key'; };
+// services that answer straight from your phone (OpenAI-style); NVIDIA, GLM and Claude keys need a server, so OMEGA can't use them directly
+const EXTRA = {
+  deepseek: { url: 'https://api.deepseek.com/chat/completions', models: ['deepseek-chat', 'deepseek-reasoner'] },
+  mistral: { url: 'https://api.mistral.ai/v1/chat/completions', models: ['mistral-medium-latest', 'mistral-small-latest', 'mistral-large-latest'], sees: true },
+  huggingface: { url: 'https://router.huggingface.co/v1/chat/completions', models: ['openai/gpt-oss-120b', 'deepseek-ai/DeepSeek-V3.1', 'Qwen/Qwen3-235B-A22B-Instruct-2507', 'meta-llama/Llama-3.3-70B-Instruct'] },
+  xai: { url: 'https://api.x.ai/v1/chat/completions', models: ['grok-4-fast', 'grok-4', 'grok-3-mini'], sees: true },
+  together: { url: 'https://api.together.xyz/v1/chat/completions', models: ['openai/gpt-oss-120b', 'meta-llama/Llama-3.3-70B-Instruct-Turbo', 'deepseek-ai/DeepSeek-V3'] },
+};
+const NO_PHONE = { nvidia: 'NVIDIA', glm: 'GLM (Zhipu)', anthropic: 'Claude (Anthropic)', unknown: 'this key' };
+const SEES = p => ['gemini', 'polli', 'openrouter', 'openai'].includes(p) || !!(EXTRA[p] && EXTRA[p].sees);
+const cloudSees = () => SEES(cloudProvider()) || cloudKeys().some(k => SEES(keyProvider(k))); // can it look at photos itself?
+const CLOUD_NAME = { free: 'the free cloud brain', gemini: 'Gemini', groq: 'Groq', polli: 'Pollinations', openrouter: 'OpenRouter', openai: 'ChatGPT (OpenAI)', cerebras: 'Cerebras', deepseek: 'DeepSeek', mistral: 'Mistral', huggingface: 'Hugging Face', xai: 'Grok (xAI)', together: 'Together AI', nvidia: 'NVIDIA', glm: 'GLM (Zhipu)', anthropic: 'Claude (Anthropic)', unknown: 'Unknown key' };
 // best models first; if one isn't on your free plan (or is busy) OMEGA tries the next one and remembers what worked
 const CLOUD_MODELS = {
   gemini: ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest'],
@@ -1288,7 +1311,7 @@ async function cloudChat(messages, o) {
   let lastErr = null;
   try {
     for (const k of order) {
-      activeKey = k; const name = CLOUD_NAME[keyProvider(k)];
+      activeKey = k; const name = keyName(k);
       try { const r = await cloudChatLong(messages, o); store.set('keyOk', k); o.brain = name; return r; }
       catch (e) {
         if (stopFlag) throw e; lastErr = e; keyCool[k] = Date.now() + 10 * 60 * 1000; try { syncCloud(); } catch (_) { }
@@ -1359,12 +1382,16 @@ async function cloudChatOnce(messages, o) {
         body: JSON.stringify({ model, messages, stream: true, max_completion_tokens: Math.max(o.maxTokens, 4000), ...(deep ? { reasoning_effort: 'high' } : {}) }) });
       if (prov === 'cerebras') return fetch('https://api.cerebras.ai/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + curKey() },
         body: JSON.stringify({ model, messages: textOnly(messages), stream: true, max_completion_tokens: o.maxTokens, temperature: o.temperature }) });
+      if (EXTRA[prov]) return fetch(EXTRA[prov].url, { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + curKey().trim() },
+        body: JSON.stringify({ model, messages: EXTRA[prov].sees ? messages : textOnly(messages), stream: true, max_tokens: o.maxTokens, temperature: o.temperature }) });
       if (prov === 'polli') return fetch('https://gen.pollinations.ai/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + curKey() }, body: JSON.stringify({ model: 'openai', messages, stream: true, max_tokens: o.maxTokens, temperature: o.temperature }) });
       if (prov === 'openrouter') return fetch('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + curKey(), 'X-Title': 'OMEGA' },
         body: JSON.stringify({ model, messages, stream: true, max_tokens: o.maxTokens, temperature: o.temperature }) });
       return fetch('https://text.pollinations.ai/openai', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'openai', messages: textOnly(messages), stream: true, max_tokens: o.maxTokens, temperature: o.temperature, private: true, referrer: 'omega', ...(deep ? { reasoning_effort: 'high' } : {}) }) });
     };
     // pick the model: the one that worked last time first, then the rest of the list
+    if (NO_PHONE[prov]) throw new Error(prov === 'unknown' ? 'OMEGA doesn\u2019t know what kind of key this is. Tap Edit in Settings and pick it' : CLOUD_NAME[prov] + ' keys only work through a server, not straight from a phone');
+    if (EXTRA[prov] && !CLOUD_MODELS[prov]) CLOUD_MODELS[prov] = EXTRA[prov].models.slice();
     const list = CLOUD_MODELS[prov] ? [...new Set([settings.cloudModel && CLOUD_MODELS[prov].includes(settings.cloudModel) ? settings.cloudModel : null, store.get('cloudOk_' + prov), ...CLOUD_MODELS[prov]].filter(Boolean))] : [null];
     const textOnlyMsgs = messages.map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : m.content.filter(p => p.type === 'text').map(p => p.text).join('\n') }));
     let hubName = '';
@@ -1382,6 +1409,14 @@ async function cloudChatOnce(messages, o) {
       if (r.status === 400 || r.status === 403) { const body = await r.clone().text().catch(() => ''); if (/api[ _-]?key|invalid.*key|unauth|permission/i.test(body)) break; } // a bad key: don't try every model
       if (r.status === 403 && prov !== 'gemini') break;
       try { await r.text(); } catch (_) { } // try the next model
+    }
+    if (r && !r.ok && r.status === 404 && (EXTRA[prov] || prov === 'openai' || prov === 'cerebras')) { // none of the usual models exist: ask the service which ones it has
+      try {
+        const base = (EXTRA[prov] ? EXTRA[prov].url : prov === 'openai' ? 'https://api.openai.com/v1/chat/completions' : 'https://api.cerebras.ai/v1/chat/completions').replace(/\/chat\/completions$/, '');
+        const ml = await (await fetch(base + '/models', { signal: sig, headers: { Authorization: 'Bearer ' + curKey().trim() } })).json();
+        const ids = (ml.data || []).map(x => x.id).filter(id => !/embed|whisper|tts|audio|image|dall|moderation|rerank|ocr|guard/i.test(id));
+        for (const model of ids.slice(0, 4)) { r = await request(model); used = model; if (r.ok) { CLOUD_MODELS[prov] = [model, ...CLOUD_MODELS[prov]]; break; } }
+      } catch (_) { }
     }
     if (r.ok && used && CLOUD_MODELS[prov]) store.set('cloudOk_' + prov, used);
     clearTimeout(busyNote);
@@ -1791,14 +1826,29 @@ $('#keyAdd').onclick = () => {
   $('#keyMsg').textContent = n ? `✅ Saved ${n} key${n > 1 ? 's' : ''}. OMEGA will use ${n > 1 ? 'them' : 'it'} now.` : 'That doesn\u2019t look like a key (or it\u2019s already saved).';
 };
 $('#keyList').onclick = e => {
+  const row = e.target.closest('.keyrow');
+  const ed = e.target.closest('[data-editkey]'); if (ed && row) { row.querySelector('.keyview').hidden = true; row.querySelector('.keyedit').hidden = false; row.querySelector('.kname').focus(); return; }
+  if (e.target.closest('[data-cancelkey]')) { syncCloud(); return; }
+  const sv = e.target.closest('[data-savekey]');
+  if (sv && row) {
+    const k = cloudKeys()[+sv.dataset.savekey]; settings.keyMeta = settings.keyMeta || {};
+    const name = row.querySelector('.kname').value.trim().slice(0, 40), prov = row.querySelector('.kprov').value;
+    settings.keyMeta[k] = { name, prov }; delete keyCool[k]; if (store.get('keyOk', '') === k) store.set('keyOk', '');
+    store.set('settings', settings); syncCloud(); $('#keyMsg').textContent = `✅ Saved "${name || CLOUD_NAME[keyProvider(k)]}".`; return;
+  }
   const b = e.target.closest('[data-delkey]'); if (!b) return;
-  const keys = cloudKeys(); keys.splice(+b.dataset.delkey, 1); store.set('settings', settings); syncCloud(); $('#keyMsg').textContent = 'Removed.';
+  const keys = cloudKeys(); const gone = keys.splice(+b.dataset.delkey, 1)[0]; if (settings.keyMeta) delete settings.keyMeta[gone]; store.set('settings', settings); syncCloud(); $('#keyMsg').textContent = 'Removed.';
 };
 function syncCloud() {
   $('#cloudOn').checked = settings.cloud !== false;
   const keys = cloudKeys();
-  $('#keyList').innerHTML = keys.map((k, i) => `<div class="keyrow"><span>${i + 1}. ${esc(CLOUD_NAME[keyProvider(k)])} <span class="kmask">••••${esc(k.slice(-4))}</span>${keyCool[k] > Date.now() ? ' ⚠️ resting' : store.get('keyOk', '') === k ? ' ✅' : ''}</span><button type="button" data-delkey="${i}" aria-label="Remove this key">Remove</button></div>`).join('');
-  $('#cloudState').textContent = (keys.length > 1 && settings.cloud !== false ? `${keys.length} keys saved. OMEGA tries them top to bottom and skips any that fail or hit their limit. ` : '') + (settings.cloud === false ? 'Off: everything stays on this device.' : navigator.onLine === false ? 'On, but you are offline: the phone brain answers.' : (hub.ready && hub.ready.length && !cloudForceFree && cloudProvider() === 'free' ? `On: answers come from OMEGA's own switchboard of free top AI brains (${hub.ready.length} ready: ${hub.ready.join(', ')}), then Pollinations, then the phone brain. Your messages go to whichever one answers. Paste a free key below for your own brain.` : null) || ({ free: 'On: answers come from a big free cloud brain (Pollinations, no key needed) when you are online. Your messages go to Pollinations. Photos and videos stay with the phone brain. Paste a free key below for a smarter, faster brain.', gemini: 'On, with your Google Gemini key: a smart brain that thinks out loud and can see photos. Your messages go to Google. If it hits its free limit, the free cloud or phone brain answers.', groq: 'On, with your Groq key: very fast big open models. Your messages go to Groq.', polli: 'On, with your Pollinations key: faster cloud answers, and it can see photos. Your messages go to Pollinations.', openrouter: 'On, with your OpenRouter key: free models like DeepSeek. Your messages go to OpenRouter.', openai: 'On, with your ChatGPT (OpenAI) key. Your messages go to OpenAI. OpenAI keys usually need credit on the account.', cerebras: 'On, with your Cerebras key: very fast open models. Your messages go to Cerebras.' })[cloudProvider()]);
+  const PROV_OPTS = ['auto', 'gemini', 'groq', 'openrouter', 'openai', 'deepseek', 'mistral', 'huggingface', 'xai', 'together', 'cerebras', 'polli', 'nvidia', 'glm', 'anthropic'];
+  $('#keyList').innerHTML = keys.map((k, i) => { const m = (settings.keyMeta || {})[k] || {}; const p = keyProvider(k); const status = NO_PHONE[p] ? ' ⚠️ can\u2019t use from phone' : keyCool[k] > Date.now() ? ' ⚠️ resting' : store.get('keyOk', '') === k ? ' ✅' : '';
+    return `<div class="keyrow" data-k="${i}"><div class="keyview"><span>${i + 1}. ${esc(keyName(k))} <span class="kmask">••••${esc(k.slice(-4))}</span>${status}</span><span class="keybtns"><button type="button" data-editkey="${i}">Edit</button><button type="button" data-delkey="${i}" aria-label="Remove this key">Remove</button></span></div>
+    <div class="keyedit" hidden><label>Name<input type="text" class="kname" maxlength="40" value="${esc(m.name || '')}" placeholder="${esc(CLOUD_NAME[p])}"></label>
+    <label>What kind of key<select class="kprov">${PROV_OPTS.map(o => `<option value="${o}"${(m.prov || 'auto') === o ? ' selected' : ''}>${o === 'auto' ? 'Let OMEGA guess (' + esc(CLOUD_NAME[guessProvider(k)]) + ')' : esc(CLOUD_NAME[o])}${NO_PHONE[o] ? ' (needs a server)' : ''}</option>`).join('')}</select></label>
+    <span class="keybtns"><button type="button" data-savekey="${i}" class="primary">Save</button><button type="button" data-cancelkey="${i}">Cancel</button></span></div></div>`; }).join('');
+  $('#cloudState').textContent = (keys.length > 1 && settings.cloud !== false ? `${keys.length} keys saved. OMEGA tries them top to bottom and skips any that fail or hit their limit. ` : '') + (settings.cloud === false ? 'Off: everything stays on this device.' : navigator.onLine === false ? 'On, but you are offline: the phone brain answers.' : (hub.ready && hub.ready.length && !cloudForceFree && cloudProvider() === 'free' ? `On: answers come from OMEGA's own switchboard of free top AI brains (${hub.ready.length} ready: ${hub.ready.join(', ')}), then Pollinations, then the phone brain. Your messages go to whichever one answers. Paste a free key below for your own brain.` : null) || ({ free: 'On: answers come from a big free cloud brain (Pollinations, no key needed) when you are online. Your messages go to Pollinations. Photos and videos stay with the phone brain. Paste a free key below for a smarter, faster brain.', gemini: 'On, with your Google Gemini key: a smart brain that thinks out loud and can see photos. Your messages go to Google. If it hits its free limit, the free cloud or phone brain answers.', groq: 'On, with your Groq key: very fast big open models. Your messages go to Groq.', polli: 'On, with your Pollinations key: faster cloud answers, and it can see photos. Your messages go to Pollinations.', openrouter: 'On, with your OpenRouter key: free models like DeepSeek. Your messages go to OpenRouter.', openai: 'On, with your ChatGPT (OpenAI) key. Your messages go to OpenAI. OpenAI keys usually need credit on the account.', cerebras: 'On, with your Cerebras key: very fast open models. Your messages go to Cerebras.' })[cloudProvider()] || `On, with your ${keyName(curKey())} key. Your messages go to ${CLOUD_NAME[cloudProvider()]}.`);
 }
 $('#autoPick').onchange = e => { settings.auto = e.target.checked; settings.skipRec = null; store.set('settings', settings); if (!chat) refreshWelcome(); };
 $('#loadBtn').onclick = () => {
