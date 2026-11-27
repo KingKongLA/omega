@@ -7,7 +7,7 @@ const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.89';
 const WLLAMA_URL = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/index.js';
 const WLLAMA_WASM = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/wasm/wllama.wasm';
 const PROXY = 'https://proxy.cors.dev/';
-const VERSION = '3.7.1';
+const VERSION = '3.8.0';
 
 const MODELS = [
   { key: 'cpu-qwen3-0.6b', engine: 'cpu', name: 'Qwen3 0.6B', repo: 'unsloth/Qwen3-0.6B-GGUF', file: 'Qwen3-0.6B-Q4_K_M.gguf', sizeMB: 400, memMB: 650, thinking: true, desc: 'Recommended for phones and tablets. Runs on the processor, so it does not crash.' },
@@ -199,7 +199,7 @@ document.addEventListener('click', e => {
   const b = e.target.closest && e.target.closest('[data-copy],[data-run],[data-play],[data-showcode],[data-linkfor]'); if (!b) return;
   if (b.dataset.play && codes[b.dataset.play]) { openPlayer(codes[b.dataset.play].code); return; }
   if (b.dataset.showcode) { const c = document.getElementById('c-' + b.dataset.showcode); if (c) { c.hidden = !c.hidden; b.textContent = c.hidden ? 'Code' : 'Hide code'; } return; }
-  if (b.dataset.linkfor) { if (!b.getAttribute('href')) { e.preventDefault(); const c = codes[b.dataset.linkfor]; if (c) makeLink(c.code).then(u => { b.href = u; location.href = u; }); } return; }
+  if (b.dataset.linkfor) { if (!b.getAttribute('href')) { e.preventDefault(); const c = codes[b.dataset.linkfor]; const w = window.open('', '_blank'); if (c) makeLink(c.code).then(u => { b.href = u; if (w) w.location.href = u; else location.href = u; }); } return; } // a new tab, so OMEGA stays open
   if (b.dataset.copy && codes[b.dataset.copy]) copyText(codes[b.dataset.copy].code, b);
   if (b.dataset.run && codes[b.dataset.run]) runCode(codes[b.dataset.run], document.getElementById('r-' + b.dataset.run));
 });
@@ -365,7 +365,9 @@ function parseSearchMarkdown(md) {
   return res;
 }
 function cleanQuery(text) {
-  return text.replace(/^(hey|yo|omega|bro|please|can you|could you|search( for| up)?|look up|google)\b[, ]*/gi, '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  let t = String(text), was;
+  do { was = t; t = t.replace(/^\s*(hey|yo|omega|bro|please|pls|can you|could you|search( for| up)?|look up|google)\b[, ]*/i, ''); } while (t !== was && t);
+  return (t || String(text)).replace(/\s+/g, ' ').trim().slice(0, 200);
 }
 async function toolWeb(text) {
   const q = cleanQuery(text);
@@ -911,7 +913,7 @@ function searchPast(text) {
     if (terms.length ? hit.size : win) scored.push({ c, best, score: terms.length ? total * (hit.size / terms.length + 0.3) : (c.u || c.t || 0), hits: hit.size });
   }
   scored.sort((x, y) => y.score - x.score);
-  const top = scored.slice(0, 3).filter((x, k) => !terms.length || (x.hits >= Math.min(2, terms.length) || k === 0 && x.hits >= 1));
+  const top = scored.slice(0, 3).filter((x, k) => !terms.length || x.hits >= Math.min(2, terms.length) || (k === 0 && x.hits >= 1 && terms.length <= 2));
   if (!top.length) return null;
   const when = c => new Date(c.u || c.t || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   const one = t => clip(String(t.text || '').replace(/```[\s\S]*?```/g, '[code]').replace(/\s+/g, ' '), 320);
@@ -1086,7 +1088,7 @@ function downscale(src, max, q = 0.85) {
     img.src = src;
   });
 }
-const canvasBuf = (c, q = 0.85) => new Promise(r => c.toBlob(b => r(b.arrayBuffer()), 'image/jpeg', q));
+const canvasBuf = (c, q = 0.85) => new Promise((r, no) => c.toBlob(b => b ? r(b.arrayBuffer()) : no(new Error("That photo couldn't be read. Try a screenshot of it or a JPG.")), 'image/jpeg', q));
 async function videoInfo(file) {
   const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.preload = 'metadata';
   const url = URL.createObjectURL(file); v.src = url;
@@ -1201,26 +1203,27 @@ function cloudKeys() {
   }
   return settings.cloudKeys;
 }
-let activeKey = null; // the key being tried right now
 const keyCool = {}; // keys that just failed rest for a bit so answers stay fast
-const curKey = () => (activeKey != null ? activeKey : cloudKeys()[0]) || '';
+const curKey = () => usableKeys()[0] || ''; // the first key OMEGA can actually use
 const cloudFree = () => !curKey();
 const polliKey = () => /^(sk_|pk_|plln_)/.test(curKey()); // a free Pollinations key (enter.pollinations.ai): faster, and the cloud can see photos
 // OMEGA's own brain switchboard (Vercel): tries free top AI brains in order (DeepSeek, Gemini, Groq, NVIDIA, OpenRouter, GLM, Mistral, Cloudflare).
 // Its keys live on the server, never in this public code. If it's not set up or all are busy, OMEGA uses the Pollinations free brain, then the phone brain.
 const HUB = 'https://omega-brain.vercel.app';
 let hub = store.get('hub', { ready: [], t: 0 });
-const hubReady = () => cloudProvider() === 'free' && hub.ready && hub.ready.length > 0 && Date.now() >= hubCoolUntil;
+const hubUp = () => !!(hub.ready && hub.ready.length > 0 && Date.now() >= hubCoolUntil);
+const hubReady = () => cloudProvider() === 'free' && hubUp();
 let hubCoolUntil = 0;
 async function checkHub() {
-  try { const r = await fetch(HUB + '/api/health', { cache: 'no-store' }); const j = await r.json(); hub = { ready: Array.isArray(j.ready) ? j.ready : [], t: Date.now() }; store.set('hub', hub); } catch (e) { }
+  try { const r = await fetch(HUB + '/api/health', { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); const j = await r.json(); hub = { ready: Array.isArray(j.ready) ? j.ready : [], t: Date.now() }; }
+  catch (e) { hub = { ready: [], t: Date.now() }; } // down or gone: don't wait on it
+  store.set('hub', hub);
   try { syncCloud(); } catch (e) { }
 }
 if (!window.__omegaNoCloud) { setTimeout(checkHub, 1500); setInterval(checkHub, 10 * 60 * 1000); }
 // which cloud brain your key is for (you paste one key in Settings; OMEGA works out the rest)
-let cloudForceFree = false;
 function cloudProvider() {
-  return keyProvider(curKey(), cloudForceFree);
+  return keyProvider(curKey());
 }
 function keyProvider(key, forceFree) {
   const k = (key || '').trim();
@@ -1255,8 +1258,9 @@ const EXTRA = {
   together: { url: 'https://api.together.xyz/v1/chat/completions', models: ['openai/gpt-oss-120b', 'meta-llama/Llama-3.3-70B-Instruct-Turbo', 'deepseek-ai/DeepSeek-V3'] },
 };
 const NO_PHONE = { nvidia: 'NVIDIA', glm: 'GLM (Zhipu)', anthropic: 'Claude (Anthropic)', unknown: 'this key' };
-const SEES = p => ['gemini', 'polli', 'openrouter', 'openai'].includes(p) || !!(EXTRA[p] && EXTRA[p].sees);
-const cloudSees = () => SEES(cloudProvider()) || cloudKeys().some(k => SEES(keyProvider(k))); // can it look at photos itself?
+const SEES = p => ['gemini', 'polli', 'openai'].includes(p) || !!(EXTRA[p] && EXTRA[p].sees); // OpenRouter's free models are text only
+const usableKeys = () => cloudKeys().filter(k => !NO_PHONE[keyProvider(k)]);
+const cloudSees = () => usableKeys().some(k => SEES(keyProvider(k))) || (!usableKeys().length && SEES(cloudProvider())); // can it look at photos itself?
 const CLOUD_NAME = { free: 'the free cloud brain', gemini: 'Gemini', groq: 'Groq', polli: 'Pollinations', openrouter: 'OpenRouter', openai: 'ChatGPT (OpenAI)', cerebras: 'Cerebras', deepseek: 'DeepSeek', mistral: 'Mistral', huggingface: 'Hugging Face', xai: 'Grok (xAI)', together: 'Together AI', nvidia: 'NVIDIA', glm: 'GLM (Zhipu)', anthropic: 'Claude (Anthropic)', unknown: 'Unknown key' };
 // best models first; if one isn't on your free plan (or is busy) OMEGA tries the next one and remembers what worked
 const CLOUD_MODELS = {
@@ -1325,6 +1329,7 @@ async function testAndFix(ui, turn) {
 }
 
 // ---------------- video editor ----------------
+let videoBusy = false; // Stop also stops a video edit that's running
 async function editVideo(text, files, ui, turn) {
   const V = window.OMEGA_VIDEO, vids = files.filter(f => f.kind === 'video'), imgs = files.filter(f => f.kind === 'image');
   const totalMB = files.reduce((n, f) => n + ((f.blob && f.blob.size) || 0), 0) / 1048576;
@@ -1332,7 +1337,7 @@ async function editVideo(text, files, ui, turn) {
   ui.work.hidden = false;
   // iPhone/iPad: Safari closes tabs that use too much memory, so put the chat brain away while editing (it comes back in seconds)
   if (IS_IOS && engine && !loading) { ui.wt.textContent = '🎬 Making room for the video editor…'; await dropEngine(); }
-  ui.wt.textContent = '🎬 Planning your edit…'; step(ui, '🎬 Working out the edit you want');
+  ui.wt.textContent = '🎬 Planning your edit…'; step(ui, '🎬 Working out the edit you want'); videoBusy = true;
   const rules = V.planFromText(text, vids.length, imgs.length);
   let plan = null;
   if (cloudOn()) { // the cloud brain understands messy requests best ("cut the boring part at the start and make it tiktok ready")
@@ -1381,32 +1386,32 @@ async function editVideo(text, files, ui, turn) {
     if (stopFlag) { turn.text = '(stopped)'; render(ui.ans, turn.text); return; }
     turn.text = `I couldn't finish that edit: ${e.message}. Try a shorter clip, or ask for one change at a time.`;
     render(ui.ans, turn.text);
-  } finally { V.release().catch(() => { }); } // free the editor's memory after every job (it restarts in a second next time)
+  } finally { videoBusy = false; V.release().catch(() => { }); } // free the editor's memory after every job (it restarts in a second next time)
 }
 // The free cloud stops each answer after about 800 words-pieces. For long answers (whole apps and games),
 // OMEGA asks it to keep going and stitches the parts together, so the code comes out complete.
 // your key's brain first; if it fails (free limit reached, key problem), the free no-key cloud brain answers instead
 async function cloudChat(messages, o) {
-  const keys = cloudKeys();
+  const keys = usableKeys();
   if (!keys.length || o._fb) return cloudChatLong(messages, o);
-  // the key that worked last time goes first, then the rest in the order you saved them
+  const hasPics = messages.some(m => Array.isArray(m.content) && m.content.some(p => p.type === 'image_url'));
+  // the key that worked last time goes first, then the rest in the order you saved them (photos: only keys that can see)
   const last = store.get('keyOk', ''); let order = [...new Set([keys.includes(last) ? last : null, ...keys].filter(Boolean))];
+  if (hasPics) order = order.filter(k => SEES(keyProvider(k)));
   const ready = order.filter(k => !(keyCool[k] > Date.now())); if (ready.length) order = ready; // skip keys that just failed (for 10 minutes)
   let lastErr = null;
-  try {
-    for (const k of order) {
-      activeKey = k; const name = keyName(k);
-      try { const r = await cloudChatLong(messages, o); store.set('keyOk', k); o.brain = name; return r; }
-      catch (e) {
-        if (stopFlag) throw e; lastErr = e; keyCool[k] = Date.now() + 10 * 60 * 1000; try { syncCloud(); } catch (_) { }
-        if (o.ui) { o.ui.wt.textContent = `☁️ ${name} didn't answer, trying the next brain…`; step(o.ui, `↪️ ${name} (key ••••${k.slice(-4)}) didn't answer (${clip(e.message, 40)})`); }
-      }
+  for (const k of order) {
+    const name = keyName(k);
+    try { const r = await cloudChatLong(messages, { ...o, key: k, _out: o }); store.set('keyOk', k); o.brain = name; return r; }
+    catch (e) {
+      if (stopFlag) throw e; lastErr = e; keyCool[k] = Date.now() + 10 * 60 * 1000; try { syncCloud(); } catch (_) { }
+      if (o.ui) { o.ui.wt.textContent = `☁️ ${name} didn't answer, trying the next brain…`; step(o.ui, `↪️ ${name} (key ••••${k.slice(-4)}) didn't answer (${clip(e.message, 40)})`); }
     }
-  } finally { activeKey = null; }
+  }
+  if (hasPics) throw lastErr || new Error('none of your keys can see photos');
   if (o.ui) step(o.ui, '↪️ None of your keys answered, so the free cloud brain is answering');
-  cloudForceFree = true;
-  try { const r = await cloudChatLong(messages, { ...o, _fb: true }); o.model = 'free cloud'; return r; }
-  catch (e) { throw lastErr || e; } finally { cloudForceFree = false; }
+  try { const r = await cloudChatLong(messages, { ...o, key: '', _fb: true, _out: o }); o.model = 'free cloud'; return r; }
+  catch (e) { throw lastErr || e; }
 }
 async function cloudChatLong(messages, o) {
   let all = '', thoughts = '', parts = 0;
@@ -1423,7 +1428,7 @@ async function cloudChatLong(messages, o) {
     else { // a later part failed (busy): wait and try again, and if it still fails keep what we have
       try { raw = await cloudChatOnce(msgs, oo); } catch (e) { if (stopFlag) break; await sleep(10000); cloudCoolUntil = 0; try { raw = await cloudChatOnce(msgs, oo); } catch (e2) { break; } }
     }
-    o.got = true; o.finish = oo.finish; o.model = oo.model || o.model;
+    o.got = true; o.finish = oo.finish; o.model = oo.model || o.model; if (o._out) { o._out.got = true; o._out.model = o.model; }
     if (stopFlag) return (thoughts ? '<think>' + thoughts + '</think>' : '') + all;
     const piece = thinkStrip(raw); if (!parts) thoughts = thoughtsOf(raw);
     all = glue(prefix, piece); parts++;
@@ -1453,7 +1458,7 @@ async function cloudChatOnce(messages, o) {
   const KEY = o.key != null ? o.key : curKey(); // team mode passes the key; otherwise the key being tried now
   try {
     const prov = o.key != null ? keyProvider(o.key) : cloudProvider();
-    if (prov === 'free' && !hubReady() && Date.now() < cloudCoolUntil) throw new Error('free cloud brain is busy, try again in a minute');
+    if (prov === 'free' && !hubUp() && Date.now() < cloudCoolUntil) throw new Error('free cloud brain is busy, try again in a minute');
     const free = prov === 'free';
     const busyNote = setTimeout(() => { if (o.ui && !o.got) o.ui.wt.textContent = '☁️ The free cloud brain is busy, your answer is on the way…'; }, 9000);
     const textOnly = ms => ms.map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : m.content.filter(p => p.type === 'text').map(p => p.text).join('\n') }));
@@ -1481,7 +1486,7 @@ async function cloudChatOnce(messages, o) {
     const textOnlyMsgs = messages.map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : m.content.filter(p => p.type === 'text').map(p => p.text).join('\n') }));
     let hubName = '';
     let r = null, used = null;
-    if (free && hubReady()) { // OMEGA's own switchboard first: the strongest free brains
+    if (free && hubUp()) { // OMEGA's own switchboard first: the strongest free brains
       try {
         const h = await fetch(HUB + '/api/chat', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: textOnlyMsgs, max_tokens: o.maxTokens, temperature: o.temperature }) });
         if (h.ok && h.body) { r = h; hubName = h.headers.get('X-Omega-Provider') || 'free brain'; }
@@ -1513,7 +1518,7 @@ async function cloudChatOnce(messages, o) {
       buf += dec.decode(value, { stream: true }); const lines = buf.split('\n'); buf = lines.pop();
       for (const ln of lines) {
         const l = ln.trim(); if (!l.startsWith('data:')) continue; const d = l.slice(5).trim(); if (d === '[DONE]') continue;
-        try { const j = JSON.parse(d); if (j.error) throw new Error(j.error.message || 'cloud error'); model = j.model || model; const ch0 = j.choices && j.choices[0]; if (ch0 && ch0.finish_reason) o.finish = ch0.finish_reason; const dl = (ch0 && ch0.delta) || {}; reason += dl.reasoning || dl.reasoning_content || ''; let ct = dl.content || ''; if (ct && (inThought || /<thought>/.test(ct))) { const parts = ct.split(/(<\/?thought>)/); ct = ''; for (const p of parts) { if (p === '<thought>') inThought = true; else if (p === '</thought>') inThought = false; else if (inThought) reason += p; else ct += p; } } if (dl.extra_content && dl.extra_content.google && dl.extra_content.google.thought) { reason += ct; ct = ''; } text += ct; } catch (e) { if (/cloud error|error/i.test(e.message) && !/JSON/.test(e.message)) throw e; }
+        let j; try { j = JSON.parse(d); } catch (_) { continue; } if (j.error) throw new Error((j.error && j.error.message) || 'cloud error'); try { model = j.model || model; const ch0 = j.choices && j.choices[0]; if (ch0 && ch0.finish_reason) o.finish = ch0.finish_reason; const dl = (ch0 && ch0.delta) || {}; reason += dl.reasoning || dl.reasoning_content || ''; let ct = dl.content || ''; if (ct && (inThought || /<thought>/.test(ct))) { const parts = ct.split(/(<\/?thought>)/); ct = ''; for (const p of parts) { if (p === '<thought>') inThought = true; else if (p === '</thought>') inThought = false; else if (inThought) reason += p; else ct += p; } } if (dl.extra_content && dl.extra_content.google && dl.extra_content.google.thought) { reason += ct; ct = ''; } text += ct; } catch (_) { }
         o.got = true; o.onText(reason ? '<think>' + reason + (text ? '</think>' : '') + text : text);
         if (stopFlag) { ctl.abort(); break; }
       }
@@ -1667,7 +1672,7 @@ const SEND_SVG = sendBtn.innerHTML, STOP_SVG = '<svg width="14" height="14" view
 function setBusy(b) { busy = b; sendBtn.innerHTML = b ? STOP_SVG : SEND_SVG; sendBtn.setAttribute('aria-label', b ? 'Stop' : 'Send'); grow(); }
 // Stop answers right away, even while the brain is still reading a long chat (it finishes reading quietly in the background)
 let enginePending = null; const stopWaiters = [];
-sendBtn.onclick = () => { if (busy) { stopFlag = true; stopWaiters.splice(0).forEach(f => f()); try { engine && engine.stop(); } catch (e) { } try { cloudAborts.forEach(c => c.abort()); } catch (e) { } try { cloudAbort && cloudAbort.abort(); } catch (e) { } } else send(); };
+sendBtn.onclick = () => { if (busy) { stopFlag = true; stopWaiters.splice(0).forEach(f => f()); try { engine && engine.stop(); } catch (e) { } try { cloudAborts.forEach(c => c.abort()); } catch (e) { } if (videoBusy && window.OMEGA_VIDEO) OMEGA_VIDEO.release().catch(() => { }); try { cloudAbort && cloudAbort.abort(); } catch (e) { } } else send(); };
 
 async function send(opts = {}) {
   if (busy) return;
@@ -1691,18 +1696,18 @@ async function send(opts = {}) {
       if (edFiles.length) { await editVideo(text, edFiles, ui, turn); return; }
     }
     if (media.length) {
-      if (cloudOn() && cloudSees()) { try { step(ui, `👁 ${CLOUD_NAME[cloudProvider()]} is looking at your ${media.some(m => m.kind === 'video') ? 'video' : 'photo'}`); await answerInCloud(text, '', att, ui, turn, media); return; } catch (e) { if (stopFlag) return; ui.work.hidden = false; ui.wt.textContent = `Cloud brain unavailable, using OMEGA's own eyes`; } }
+      if (cloudOn() && cloudSees()) { try { step(ui, `👁 ${keyName(usableKeys().find(k => SEES(keyProvider(k))) || '') || 'The cloud brain'} is looking at your ${media.some(m => m.kind === 'video') ? 'video' : 'photo'}`); await answerInCloud(text, '', att, ui, turn, media); return; } catch (e) { if (stopFlag) return; ui.work.hidden = false; ui.wt.textContent = `Cloud brain unavailable, using OMEGA's own eyes`; } }
       await answerWithEyes(text, att, media, ui, turn); return;
     }
     // memory command
     // "remember that I..." saves it; "remember the plan we talked about?" is a question about the past, not a save
     const rem = /\?/.test(text) || /^(?:please\s+)?(?:do you\s+)?remember\s+(?:when|what|how|where|who|why|the time|that time|we|our|you|us|the \w+ (?:we|you|i))\b/i.test(text) ? null : text.match(/^(?:please\s+)?(?:remember|don'?t forget)(?:\s+that)?[:,]?\s+(.{3,})$/i);
     if (rem) turn.noMem = true;
-    if (rem) { const f = rem[1].replace(/[.!]+$/, ''); facts.push(f); facts = facts.slice(-100); store.set('facts', facts); renderFacts(); }
+    if (rem) { const f = rem[1].replace(/[.!]+$/, ''); facts.push(f); facts = facts.slice(-150); store.set('facts', facts); renderFacts(); }
     // well-known games: use OMEGA's tested game library (the phone brain is too small to write a whole game reliably)
     // learn the basics automatically: name and city
     const nm = text.match(/\b(?:my name is|my name's|call me|i'?m called)\s+([A-Z][a-z]{1,20})\b/i), ct = text.match(/\bi (?:live|stay|'m based|am based|live out) in ([A-Za-z][A-Za-z .'-]{2,30}?)(?:[,.!?]|\s+(?:and|but|so|bro)\b|$)/i);
-    if (nm && !/^(not|just|so|the|a)$/i.test(nm[1])) { profile.name = nm[1][0].toUpperCase() + nm[1].slice(1); store.set('profile', profile); fillProfile(); }
+    if (nm && !/^(not|just|so|the|a|later|back|tomorrow|today|tonight|now|soon|when|if|after|before|please|bro|asap|whenever|maybe|again|sometime|anytime)$/i.test(nm[1])) { profile.name = nm[1][0].toUpperCase() + nm[1].slice(1); store.set('profile', profile); fillProfile(); }
     if (ct && !NOT_PLACE.test(ct[1])) { profile.city = PLACE_ALIASES[ct[1].trim().toLowerCase()] || ct[1].trim(); store.set('profile', profile); fillProfile(); }
     // auto-memory (like ChatGPT's "Memory updated"): save clear facts about yourself, e.g. "I run a construction business in LA"
     if (!rem && settings.autoMemory !== false && !cloudOn() && !/\?\s*$/.test(text)) {
@@ -1712,10 +1717,10 @@ async function send(opts = {}) {
         if (m && (m[1] = m[1].replace(/[,;]\s*(remember (that|this|it)|don'?t forget|ok|okay).*$/i, '')) && m[1].split(/\s+/).length >= 4 && !/\b(it|that|this|them|those|one)$/i.test(m[1].replace(/[.!]+$/, '')) && !/\b(name is|you|your|today|right now|tired|hungry|bored|gonna|going to|about to)\b/i.test(m[1])) found.push(m[1].replace(/[.!]+$/, '').trim());
       }
       const fresh = found.filter(f => !facts.some(x => x.toLowerCase() === f.toLowerCase()));
-      if (fresh.length) { facts.push(...fresh); facts = facts.slice(-100); store.set('facts', facts); renderFacts(); turn.memo = fresh; }
+      if (fresh.length) { facts.push(...fresh); facts = facts.slice(-150); store.set('facts', facts); renderFacts(); turn.memo = fresh; }
     }
     // learning from corrections: "no, it's ..." / "that's wrong, ..." right after an answer becomes a lesson OMEGA follows next time
-    if (!rem && !att && /^(no+|nah|nope|wrong|that'?s (wrong|not right|incorrect|not true)|incorrect|actually|not quite)\b[,.! ]+\S/i.test(text) && text.split(/\s+/).length >= 4) {
+    if (!rem && !att && !/^(no+|nah|nope)\b[,.! ]*(worries|problem|prob|thanks|thank you|need|i'?m good|im good|all good|that'?s (it|all|fine|good)|it'?s (fine|ok|okay|good))\b/i.test(text) && /^(no+|nah|nope|wrong|that'?s (wrong|not right|incorrect|not true)|incorrect|actually|not quite)\b[,.! ]+\S/i.test(text) && text.split(/\s+/).length >= 4) {
       const prevA = [...chat.turns].slice(0, -1).reverse().find(t => t.role !== 'user');
       const prevQ = chat.turns.slice(0, -1).filter(t => t.role === 'user').pop();
       if (prevA && prevQ && !/```/.test(prevA.text || '')) { lessons.push({ q: clip(prevQ.text, 300), a: clip(prevA.text, 400), fix: clip(text, 400), t: Date.now(), auto: true }); lessons = lessons.slice(-100); store.set('lessons', lessons); renderFacts(); turn.memo = (turn.memo || []).concat(['learned from your correction']); }
@@ -1901,6 +1906,7 @@ async function send(opts = {}) {
     turn.text = '';
   } finally {
     if (turn.text && !stopFlag && lastHtml(turn.text) && settings.selfTest !== false && !window.__omegaNoSelfTest) { try { await testAndFix(ui, turn); } catch (e) { } }
+    pastNote = '';
     if (turn.text && turn.memo) { const mm = document.createElement('div'); mm.className = 'hint memo'; mm.textContent = '🧠 Memory updated: ' + turn.memo.join(' · '); ui.ans.after(mm); }
     if (turn.text) { chat.turns.push(turn); showSources(ui, turn.sources); showActs(ui, turn, text); if (spoken && !stopFlag && settings.voiceReply !== false) { const rb = ui.acts.querySelector('[data-a=read]'); if (rb) speak(turn.text, rb); } }
     else chat.turns.pop();
@@ -1913,6 +1919,7 @@ async function send(opts = {}) {
 // ---- smart memory (like ChatGPT and Claude): after you talk, a big brain decides what's worth remembering ----
 async function smartMemory(text, turn, ui) {
   if (text.split(/\s+/).length < 4 || !/\b(i|i'm|im|i've|my|me|mine|we|our|us|forget|remember)\b/i.test(text)) return; // nothing about you in it
+  if (/\?\s*$/.test(text) && !/[.!]\s+\S/.test(text) && !/\b(remember|forget)\b/i.test(text)) return; // just a question: nothing new to keep
   const name = profile.name || 'the user';
   const sys = `You manage long-term memory for ${name}'s personal AI assistant, OMEGA. Read ${name}'s latest message and decide what, if anything, is worth remembering for FUTURE chats.
 SAVE only lasting things ${name} said about themselves or their life: name, age, job, school, where they live, people in their life (and their names), pets, ongoing projects and businesses, goals, plans with dates, strong likes and dislikes, and how they want OMEGA to talk or act. Also save anything they clearly ask you to remember.
@@ -1925,7 +1932,7 @@ Reply with JSON only: {"add":[],"update":[{"old":"","new":""}],"forget":[]}`;
   const out = thinkStrip(await cloudChat([{ role: 'system', content: sys }, { role: 'user', content: user }], o));
   const j = out.match(/\{[\s\S]*\}/); if (!j) return;
   let r; try { r = JSON.parse(j[0]); } catch (_) { return; }
-  const ok = s => typeof s === 'string' && s.trim().length >= 6 && s.length <= 220 && !/(sk-|AIza|gsk_|password|\b\d{12,}\b)/i.test(s);
+  const ok = s => typeof s === 'string' && s.trim().length >= 6 && s.length <= 220 && !/(\bsk-[A-Za-z0-9_-]{10,}|AIza[\w-]{10,}|gsk_\w{10,}|password|\b\d{12,}\b)/i.test(s);
   const low = s => s.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
   const changed = [];
   for (const f of (Array.isArray(r.forget) ? r.forget : [])) { const i = facts.findIndex(x => low(x) === low(String(f))); if (i >= 0) { facts.splice(i, 1); changed.push('forgot: ' + clip(String(f), 60)); } }
@@ -2011,12 +2018,12 @@ $('#keyAdd').onclick = () => {
 $('#keyList').onclick = e => {
   const row = e.target.closest('.keyrow');
   const ed = e.target.closest('[data-editkey]'); if (ed && row) { row.querySelector('.keyview').hidden = true; row.querySelector('.keyedit').hidden = false; row.querySelector('.kname').focus(); return; }
-  if (e.target.closest('[data-cancelkey]')) { syncCloud(); return; }
+  if (e.target.closest('[data-cancelkey]')) { row.querySelector('.keyedit').hidden = true; syncCloud(); return; }
   const sv = e.target.closest('[data-savekey]');
   if (sv && row) {
     const k = cloudKeys()[+sv.dataset.savekey]; settings.keyMeta = settings.keyMeta || {};
     const name = row.querySelector('.kname').value.trim().slice(0, 40), prov = row.querySelector('.kprov').value;
-    settings.keyMeta[k] = { name, prov }; delete keyCool[k]; if (store.get('keyOk', '') === k) store.set('keyOk', '');
+    row.querySelector('.keyedit').hidden = true; settings.keyMeta[k] = { name, prov }; delete keyCool[k]; if (store.get('keyOk', '') === k) store.set('keyOk', '');
     store.set('settings', settings); syncCloud(); $('#keyMsg').textContent = `✅ Saved "${name || CLOUD_NAME[keyProvider(k)]}".`; return;
   }
   const b = e.target.closest('[data-delkey]'); if (!b) return;
@@ -2025,13 +2032,15 @@ $('#keyList').onclick = e => {
 function syncCloud() {
   $('#cloudOn').checked = settings.cloud !== false;
   const keys = cloudKeys();
+  const editing = !!document.querySelector('#keyList .keyedit:not([hidden])');
   const PROV_OPTS = ['auto', 'gemini', 'groq', 'openrouter', 'openai', 'deepseek', 'mistral', 'huggingface', 'xai', 'together', 'cerebras', 'polli', 'nvidia', 'glm', 'anthropic'];
-  $('#keyList').innerHTML = keys.map((k, i) => { const m = (settings.keyMeta || {})[k] || {}; const p = keyProvider(k); const status = NO_PHONE[p] ? ' ⚠️ can\u2019t use from phone' : keyCool[k] > Date.now() ? ' ⚠️ resting' : store.get('keyOk', '') === k ? ' ✅' : '';
+  if (!editing) $('#keyList').innerHTML = keys.map((k, i) => { const m = (settings.keyMeta || {})[k] || {}; const p = keyProvider(k); const status = NO_PHONE[p] ? ' ⚠️ can\u2019t use from phone' : keyCool[k] > Date.now() ? ' ⚠️ resting' : store.get('keyOk', '') === k ? ' ✅' : '';
     return `<div class="keyrow" data-k="${i}"><div class="keyview"><span>${i + 1}. ${esc(keyName(k))} <span class="kmask">••••${esc(k.slice(-4))}</span>${status}</span><span class="keybtns"><button type="button" data-editkey="${i}">Edit</button><button type="button" data-delkey="${i}" aria-label="Remove this key">Remove</button></span></div>
     <div class="keyedit" hidden><label>Name<input type="text" class="kname" maxlength="40" value="${esc(m.name || '')}" placeholder="${esc(CLOUD_NAME[p])}"></label>
     <label>What kind of key<select class="kprov">${PROV_OPTS.map(o => `<option value="${o}"${(m.prov || 'auto') === o ? ' selected' : ''}>${o === 'auto' ? 'Let OMEGA guess (' + esc(CLOUD_NAME[guessProvider(k)]) + ')' : esc(CLOUD_NAME[o])}${NO_PHONE[o] ? ' (needs a server)' : ''}</option>`).join('')}</select></label>
     <span class="keybtns"><button type="button" data-savekey="${i}" class="primary">Save</button><button type="button" data-cancelkey="${i}">Cancel</button></span></div></div>`; }).join('');
-  $('#cloudState').textContent = (keys.length > 1 && settings.cloud !== false ? `${keys.length} keys saved. OMEGA tries them top to bottom and skips any that fail or hit their limit. ` : '') + (settings.cloud === false ? 'Off: everything stays on this device.' : navigator.onLine === false ? 'On, but you are offline: the phone brain answers.' : (hub.ready && hub.ready.length && !cloudForceFree && cloudProvider() === 'free' ? `On: answers come from OMEGA's own switchboard of free top AI brains (${hub.ready.length} ready: ${hub.ready.join(', ')}), then Pollinations, then the phone brain. Your messages go to whichever one answers. Paste a free key below for your own brain.` : null) || ({ free: 'On: answers come from a big free cloud brain (Pollinations, no key needed) when you are online. Your messages go to Pollinations. Photos and videos stay with the phone brain. Paste a free key below for a smarter, faster brain.', gemini: 'On, with your Google Gemini key: a smart brain that thinks out loud and can see photos. Your messages go to Google. If it hits its free limit, the free cloud or phone brain answers.', groq: 'On, with your Groq key: very fast big open models. Your messages go to Groq.', polli: 'On, with your Pollinations key: faster cloud answers, and it can see photos. Your messages go to Pollinations.', openrouter: 'On, with your OpenRouter key: free models like DeepSeek. Your messages go to OpenRouter.', openai: 'On, with your ChatGPT (OpenAI) key. Your messages go to OpenAI. OpenAI keys usually need credit on the account.', cerebras: 'On, with your Cerebras key: very fast open models. Your messages go to Cerebras.' })[cloudProvider()] || `On, with your ${keyName(curKey())} key. Your messages go to ${CLOUD_NAME[cloudProvider()]}.`);
+  const sk = usableKeys()[0] || '', sp = keyProvider(sk);
+  $('#cloudState').textContent = (keys.length > 1 && settings.cloud !== false ? `${keys.length} keys saved. OMEGA tries them top to bottom and skips any that fail or hit their limit. ` : '') + (settings.cloud === false ? 'Off: everything stays on this device.' : navigator.onLine === false ? 'On, but you are offline: the phone brain answers.' : (hub.ready && hub.ready.length && !sk ? `On: answers come from OMEGA's own switchboard of free top AI brains (${hub.ready.length} ready: ${hub.ready.join(', ')}), then Pollinations, then the phone brain. Your messages go to whichever one answers. Paste a free key below for your own brain.` : null) || ({ free: 'On: answers come from a big free cloud brain (Pollinations, no key needed) when you are online. Your messages go to Pollinations. Photos and videos stay with the phone brain. Paste a free key below for a smarter, faster brain.', gemini: 'On, with your Google Gemini key: a smart brain that thinks out loud and can see photos. Your messages go to Google. If it hits its free limit, the free cloud or phone brain answers.', groq: 'On, with your Groq key: very fast big open models. Your messages go to Groq.', polli: 'On, with your Pollinations key: faster cloud answers, and it can see photos. Your messages go to Pollinations.', openrouter: 'On, with your OpenRouter key: free models like DeepSeek. Your messages go to OpenRouter.', openai: 'On, with your ChatGPT (OpenAI) key. Your messages go to OpenAI. OpenAI keys usually need credit on the account.', cerebras: 'On, with your Cerebras key: very fast open models. Your messages go to Cerebras.' })[sp] || `On, with your ${keyName(sk)} key. Your messages go to ${CLOUD_NAME[sp]}.`);
 }
 $('#autoPick').onchange = e => { settings.auto = e.target.checked; settings.skipRec = null; store.set('settings', settings); if (!chat) refreshWelcome(); };
 $('#loadBtn').onclick = () => {
@@ -2143,7 +2152,7 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
   if (multiCoreBrowser && !window.crossOriginIsolated && typeof SharedArrayBuffer === 'undefined') navigator.serviceWorker.ready.then(() => {
     let tried = false; try { tried = !!sessionStorage.getItem('omega.coi'); sessionStorage.setItem('omega.coi', '1'); } catch (e) { tried = true; }
     if (tried) return;
-    const go = () => { if (!busy && !loading && !engine) location.reload(); };
+    const go = () => { if (!busy && !loading && !engine && !chat && !inp.value.trim() && !attachment) location.reload(); };
     if (navigator.serviceWorker.controller) go(); else navigator.serviceWorker.addEventListener('controllerchange', go, { once: true });
   }).catch(() => { });
 }

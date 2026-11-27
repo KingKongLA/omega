@@ -435,7 +435,7 @@ Times are in seconds from the start of the ORIGINAL video. Use only what the use
       const type = ext === 'gif' ? 'image/gif' : ext === 'mp3' ? 'audio/mpeg' : 'video/mp4';
       let dur = 0;
       if (ext !== 'gif') { try { dur = (await probe(f, finalName)).duration; } catch (e) { } }
-      return { blob: new Blob([data.buffer], { type }), ext, type, duration: dur, note, captioned: finalName === 'captioned.mp4' };
+      return { blob: new Blob([data], { type }), ext, type, duration: dur, note, captioned: finalName === 'captioned.mp4' };
     } finally { await clean([...made, out, 'txt0.png', 'txt1.png', 'txt2.png']); }
   }
   function lastError() {
@@ -480,7 +480,7 @@ Times are in seconds from the start of the ORIGINAL video. Use only what the use
     if (plan.compress) say.push('made the file smaller');
     return say;
   }
-  function fmt(s) { s = Math.round(s * 10) / 10; return s >= 60 ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}` : `${s}s`; }
+  function fmt(s) { s = Math.round(s * 10) / 10; if (s < 60) return `${s}s`; const r = Math.round(s); return `${Math.floor(r / 60)}:${String(r % 60).padStart(2, '0')}`; }
 
   // free the editor's memory (phones): it restarts in a second or two next time, from the saved copy
   async function release() {
