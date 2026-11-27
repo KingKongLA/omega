@@ -7,7 +7,7 @@ const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.89';
 const WLLAMA_URL = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/index.js';
 const WLLAMA_WASM = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/wasm/wllama.wasm';
 const PROXY = 'https://proxy.cors.dev/';
-const VERSION = '3.6.0';
+const VERSION = '3.6.1';
 
 const MODELS = [
   { key: 'cpu-qwen3-0.6b', engine: 'cpu', name: 'Qwen3 0.6B', repo: 'unsloth/Qwen3-0.6B-GGUF', file: 'Qwen3-0.6B-Q4_K_M.gguf', sizeMB: 400, memMB: 650, thinking: true, desc: 'Recommended for phones and tablets. Runs on the processor, so it does not crash.' },
