@@ -202,3 +202,11 @@ main{display:flex;flex-direction:column;height:100%;min-height:0;min-width:0;ove
 .think ul.steps li.now{color:var(--ink)}
 .think ul.steps li.now::before{background:var(--acc);opacity:1;animation:pulse 1.2s ease-in-out infinite}
 .think details[open] ul.steps{margin-top:8px}
+
+.keylist{display:flex;flex-direction:column;gap:6px;margin:6px 0}
+.keyrow{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:8px 10px;font-size:14px}
+.keyrow .kmask{opacity:.6;font-family:ui-monospace,monospace}
+.keyrow button{background:none;border:1px solid var(--line);color:inherit;border-radius:10px;padding:5px 10px;font-size:13px}
+.keyadd{display:flex;gap:8px}
+.keyadd input{flex:1;min-width:0;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:10px 12px;color:inherit;font-size:16px}
+.keyadd button{border:0;border-radius:12px;padding:0 14px;background:var(--acc);color:#fff;font-weight:600;font-size:15px}

@@ -13,7 +13,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-180.png">
-<link rel="stylesheet" href="style.css?v=32">
+<link rel="stylesheet" href="style.css?v=33">
 </head>
 <body>
 <div class="app" id="app">
@@ -76,8 +76,10 @@
   <div class="hint" id="loadText"></div>
   <h3>Cloud brain (free)</h3>
   <label class="toggle"><input type="checkbox" id="cloudOn"> Use the free cloud brain when online</label>
-  <p class="hint">Online, OMEGA asks a big free AI in the cloud (no key, no signup) for smarter answers. Offline, or if the cloud is busy, the phone brain answers. Want it even smarter? Make one free key and paste it below (never send keys to anyone): <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google Gemini</a> (best: thinks out loud and sees photos), <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Groq</a> (fastest), <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">OpenRouter</a> (DeepSeek) or <a href="https://enter.pollinations.ai" target="_blank" rel="noopener">Pollinations</a>. OMEGA works out which one it is. The key stays on this phone.</p>
-  <input type="password" id="cloudKey" placeholder="Optional free key (Gemini, Groq, OpenRouter or Pollinations)" autocomplete="off" spellcheck="false" style="width:100%;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:16px">
+  <p class="hint">Online, OMEGA asks a big free AI in the cloud (no key, no signup) for smarter answers. Offline, or if the cloud is busy, the phone brain answers. Want it even smarter? Add free AI keys below, as many as you want (never send keys to anyone): <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google Gemini</a> (best: thinks out loud and sees photos), <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Groq</a> (fastest), <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">OpenRouter</a> (DeepSeek) or <a href="https://enter.pollinations.ai" target="_blank" rel="noopener">Pollinations</a>. ChatGPT (OpenAI) keys work too. OMEGA works out which kind each key is. Keys stay on this phone.</p>
+  <div id="keyList" class="keylist"></div>
+  <div class="keyadd"><input type="password" id="cloudKey" placeholder="Paste a free AI key (Gemini, Groq, OpenRouter, ChatGPT…)" autocomplete="off" spellcheck="false"><button type="button" id="keyAdd">Add key</button></div>
+  <p class="hint" id="keyMsg">Add as many keys as you want. They stay on this phone.</p>
   <p class="hint" id="cloudState"></p>
   <h3>Eyes (photos and videos)</h3>
   <p class="hint" id="visionInfo">When you attach a photo or video, OMEGA uses a vision brain that runs on this device. It downloads the first time you need it.</p>
@@ -119,7 +121,7 @@
   <div class="row"><button class="btn pri" id="fbSave">Save lesson</button></div>
 </div>
 
-<script src="video.js?v=32" defer></script>
-<script type="module" src="app.js?v=32"></script>
+<script src="video.js?v=33" defer></script>
+<script type="module" src="app.js?v=33"></script>
 </body>
 </html>

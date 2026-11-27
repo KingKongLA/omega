@@ -7,7 +7,7 @@ const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.89';
 const WLLAMA_URL = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/index.js';
 const WLLAMA_WASM = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/wasm/wllama.wasm';
 const PROXY = 'https://proxy.cors.dev/';
-const VERSION = '3.5.1';
+const VERSION = '3.5.2';
 
 const MODELS = [
   { key: 'cpu-qwen3-0.6b', engine: 'cpu', name: 'Qwen3 0.6B', repo: 'unsloth/Qwen3-0.6B-GGUF', file: 'Qwen3-0.6B-Q4_K_M.gguf', sizeMB: 400, memMB: 650, thinking: true, desc: 'Recommended for phones and tablets. Runs on the processor, so it does not crash.' },
@@ -1109,8 +1109,19 @@ async function answerWithEyes(text, att, media, ui, turn) {
 // two cloud brains: your own OpenRouter key if you added one, otherwise Pollinations' free brain (no key, no signup, text only)
 if (/[?&]nocloud\b/.test(location.search)) window.__omegaNoCloud = true; if (/[?&]nosnap\b/.test(location.search)) window.__omegaNoSnap = true; // test switches
 const cloudOn = () => settings.cloud !== false && navigator.onLine !== false && !window.__omegaNoCloud;
-const cloudFree = () => !settings.cloudKey;
-const polliKey = () => /^(sk_|pk_|plln_)/.test(settings.cloudKey || ''); // a free Pollinations key (enter.pollinations.ai): faster, and the cloud can see photos
+// ---- your saved AI keys: add as many as you want; OMEGA tries them in order and skips any that fail ----
+function cloudKeys() {
+  if (!Array.isArray(settings.cloudKeys) || settings.cloudKey) { // move a key saved by an older OMEGA into the list
+    const old = (settings.cloudKey || '').trim(); settings.cloudKeys = Array.isArray(settings.cloudKeys) ? settings.cloudKeys : [];
+    if (old && !settings.cloudKeys.includes(old)) settings.cloudKeys.unshift(old); delete settings.cloudKey; store.set('settings', settings);
+  }
+  return settings.cloudKeys;
+}
+let activeKey = null; // the key being tried right now
+const keyCool = {}; // keys that just failed rest for a bit so answers stay fast
+const curKey = () => (activeKey != null ? activeKey : cloudKeys()[0]) || '';
+const cloudFree = () => !curKey();
+const polliKey = () => /^(sk_|pk_|plln_)/.test(curKey()); // a free Pollinations key (enter.pollinations.ai): faster, and the cloud can see photos
 // OMEGA's own brain switchboard (Vercel): tries free top AI brains in order (DeepSeek, Gemini, Groq, NVIDIA, OpenRouter, GLM, Mistral, Cloudflare).
 // Its keys live on the server, never in this public code. If it's not set up or all are busy, OMEGA uses the Pollinations free brain, then the phone brain.
 const HUB = 'https://omega-brain.vercel.app';
@@ -1125,20 +1136,28 @@ if (!window.__omegaNoCloud) { setTimeout(checkHub, 1500); setInterval(checkHub, 
 // which cloud brain your key is for (you paste one key in Settings; OMEGA works out the rest)
 let cloudForceFree = false;
 function cloudProvider() {
-  const k = (settings.cloudKey || '').trim();
-  if (!k || cloudForceFree) return 'free';
+  return keyProvider(curKey(), cloudForceFree);
+}
+function keyProvider(key, forceFree) {
+  const k = (key || '').trim();
+  if (!k || forceFree) return 'free';
+  if (/^sk-or-/.test(k)) return 'openrouter';
+  if (/^csk-/.test(k)) return 'cerebras';   // Cerebras (free tier): very fast
+  if (/^sk-(proj-|svcacct-)?[A-Za-z0-9_-]{20,}$/.test(k) && !/^sk-ant-/.test(k)) return 'openai';
   if (/^AIza/.test(k)) return 'gemini';     // Google AI Studio (free tier): smart, sees photos, thinks out loud
   if (/^gsk_/.test(k)) return 'groq';       // Groq (free tier): super fast big open models
   if (/^(sk_|pk_|plln_)/.test(k)) return 'polli';
   return 'openrouter';                       // sk-or-...: free models incl. DeepSeek
 }
-const cloudSees = () => ['gemini', 'polli', 'openrouter'].includes(cloudProvider()); // can it look at photos itself?
-const CLOUD_NAME = { free: 'the free cloud brain', gemini: 'Gemini', groq: 'Groq', polli: 'Pollinations', openrouter: 'OpenRouter' };
+const cloudSees = () => ['gemini', 'polli', 'openrouter', 'openai'].includes(cloudProvider()) || cloudKeys().some(k => ['gemini', 'polli', 'openrouter', 'openai'].includes(keyProvider(k))); // can it look at photos itself?
+const CLOUD_NAME = { free: 'the free cloud brain', gemini: 'Gemini', groq: 'Groq', polli: 'Pollinations', openrouter: 'OpenRouter', openai: 'ChatGPT (OpenAI)', cerebras: 'Cerebras' };
 // best models first; if one isn't on your free plan (or is busy) OMEGA tries the next one and remembers what worked
 const CLOUD_MODELS = {
   gemini: ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest'],
   groq: ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b', 'moonshotai/kimi-k2-instruct', 'llama-3.3-70b-versatile', 'openai/gpt-oss-20b'],
   openrouter: ['deepseek/deepseek-chat-v3.1:free', 'deepseek/deepseek-r1:free', 'openrouter/free'],
+  openai: ['gpt-5.5-mini', 'gpt-5-mini', 'gpt-4.1-mini', 'gpt-4o-mini'],
+  cerebras: ['gpt-oss-120b', 'qwen-3-235b-a22b-instruct-2507', 'llama-3.3-70b'],
 };
 let cloudCoolUntil = 0; // after a "too many requests" from the free brain, let the phone brain answer for a bit
 let cloudAbort = null;
@@ -1261,14 +1280,26 @@ async function editVideo(text, files, ui, turn) {
 // OMEGA asks it to keep going and stitches the parts together, so the code comes out complete.
 // your key's brain first; if it fails (free limit reached, key problem), the free no-key cloud brain answers instead
 async function cloudChat(messages, o) {
-  if (cloudProvider() === 'free' || o._fb) return cloudChatLong(messages, o);
-  try { return await cloudChatLong(messages, o); }
-  catch (e) {
-    if (stopFlag) throw e;
-    if (o.ui) { o.ui.wt.textContent = `☁️ ${CLOUD_NAME[cloudProvider()]} is busy (${clip(e.message, 40)}), asking the free cloud brain…`; step(o.ui, `↪️ ${CLOUD_NAME[cloudProvider()]} didn't answer (${clip(e.message, 40)}), so the free cloud brain is answering`); }
-    cloudForceFree = true;
-    try { const r = await cloudChatLong(messages, { ...o, _fb: true }); o.model = 'free cloud'; return r; } finally { cloudForceFree = false; }
-  }
+  const keys = cloudKeys();
+  if (!keys.length || o._fb) return cloudChatLong(messages, o);
+  // the key that worked last time goes first, then the rest in the order you saved them
+  const last = store.get('keyOk', ''); let order = [...new Set([keys.includes(last) ? last : null, ...keys].filter(Boolean))];
+  const ready = order.filter(k => !(keyCool[k] > Date.now())); if (ready.length) order = ready; // skip keys that just failed (for 10 minutes)
+  let lastErr = null;
+  try {
+    for (const k of order) {
+      activeKey = k; const name = CLOUD_NAME[keyProvider(k)];
+      try { const r = await cloudChatLong(messages, o); store.set('keyOk', k); o.brain = name; return r; }
+      catch (e) {
+        if (stopFlag) throw e; lastErr = e; keyCool[k] = Date.now() + 10 * 60 * 1000; try { syncCloud(); } catch (_) { }
+        if (o.ui) { o.ui.wt.textContent = `☁️ ${name} didn't answer, trying the next brain…`; step(o.ui, `↪️ ${name} (key ••••${k.slice(-4)}) didn't answer (${clip(e.message, 40)})`); }
+      }
+    }
+  } finally { activeKey = null; }
+  if (o.ui) step(o.ui, '↪️ None of your keys answered, so the free cloud brain is answering');
+  cloudForceFree = true;
+  try { const r = await cloudChatLong(messages, { ...o, _fb: true }); o.model = 'free cloud'; return r; }
+  catch (e) { throw lastErr || e; } finally { cloudForceFree = false; }
 }
 async function cloudChatLong(messages, o) {
   let all = '', thoughts = '', parts = 0;
@@ -1320,12 +1351,16 @@ async function cloudChatOnce(messages, o) {
     const textOnly = ms => ms.map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : m.content.filter(p => p.type === 'text').map(p => p.text).join('\n') }));
     const deep = !!o.deep; // Think chip on: think harder
     const request = model => {
-      if (prov === 'gemini') return fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.cloudKey.trim() },
+      if (prov === 'gemini') return fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + curKey().trim() },
         body: JSON.stringify({ model, messages, stream: true, max_tokens: Math.max(o.maxTokens, 4000), temperature: o.temperature, extra_body: { google: { thinking_config: { thinking_level: deep ? 'high' : 'low', include_thoughts: true } } } }) });
-      if (prov === 'groq') return fetch('https://api.groq.com/openai/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.cloudKey.trim() },
+      if (prov === 'groq') return fetch('https://api.groq.com/openai/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + curKey().trim() },
         body: JSON.stringify({ model, messages: textOnly(messages), stream: true, max_tokens: o.maxTokens, temperature: o.temperature, ...(/gpt-oss|qwen3|r1/.test(model) ? { reasoning_format: 'parsed', reasoning_effort: deep ? 'high' : 'medium' } : {}) }) });
-      if (prov === 'polli') return fetch('https://gen.pollinations.ai/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.cloudKey }, body: JSON.stringify({ model: 'openai', messages, stream: true, max_tokens: o.maxTokens, temperature: o.temperature }) });
-      if (prov === 'openrouter') return fetch('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.cloudKey, 'X-Title': 'OMEGA' },
+      if (prov === 'openai') return fetch('https://api.openai.com/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + curKey() },
+        body: JSON.stringify({ model, messages, stream: true, max_completion_tokens: Math.max(o.maxTokens, 4000), ...(deep ? { reasoning_effort: 'high' } : {}) }) });
+      if (prov === 'cerebras') return fetch('https://api.cerebras.ai/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + curKey() },
+        body: JSON.stringify({ model, messages: textOnly(messages), stream: true, max_completion_tokens: o.maxTokens, temperature: o.temperature }) });
+      if (prov === 'polli') return fetch('https://gen.pollinations.ai/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + curKey() }, body: JSON.stringify({ model: 'openai', messages, stream: true, max_tokens: o.maxTokens, temperature: o.temperature }) });
+      if (prov === 'openrouter') return fetch('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + curKey(), 'X-Title': 'OMEGA' },
         body: JSON.stringify({ model, messages, stream: true, max_tokens: o.maxTokens, temperature: o.temperature }) });
       return fetch('https://text.pollinations.ai/openai', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'openai', messages: textOnly(messages), stream: true, max_tokens: o.maxTokens, temperature: o.temperature, private: true, referrer: 'omega', ...(deep ? { reasoning_effort: 'high' } : {}) }) });
     };
@@ -1344,6 +1379,7 @@ async function cloudChatOnce(messages, o) {
     if (!r) for (const model of list) {
       r = await request(model); used = model;
       if (r.ok || !CLOUD_MODELS[prov] || ![400, 404, 429, 403, 503].includes(r.status) || r.status === 401) break;
+      if (r.status === 400 || r.status === 403) { const body = await r.clone().text().catch(() => ''); if (/api[ _-]?key|invalid.*key|unauth|permission/i.test(body)) break; } // a bad key: don't try every model
       if (r.status === 403 && prov !== 'gemini') break;
       try { await r.text(); } catch (_) { } // try the next model
     }
@@ -1397,7 +1433,7 @@ async function answerInCloud(text, live, att, ui, turn, media = []) {
   catch (e) { if (stopFlag || !/empty answer|took too long|Failed to fetch|network|HTTP 5/i.test(e.message)) throw e; ui.wt.textContent = '☁️ Asking the cloud brain again…'; raw = await cloudChat(messages, o); } // the free cloud sometimes hiccups: one quick retry
   const th = thoughtsOf(raw); if (th) { turn.think = clip(th, 6000); showThoughts(ui, raw, t0, true); }
   turn.text = thinkStrip(raw).trim() || '(stopped)';
-  ui.wt.textContent = `☁️ Answered by ${o.model === 'free cloud' ? 'the free cloud brain' : CLOUD_NAME[cloudProvider()]}${o.model && o.model !== 'free cloud' ? ' (' + o.model.replace(/:free$/, '').replace(/^models\//, '') + ')' : ''}`;
+  ui.wt.textContent = `☁️ Answered by ${o.model === 'free cloud' ? 'the free cloud brain' : o.brain || CLOUD_NAME[cloudProvider()]}${o.model && o.model !== 'free cloud' ? ' (' + o.model.replace(/:free$/, '').replace(/^models\//, '') + ')' : ''}`;
   render(ui.ans, turn.text);
 }
 // ask again: removes the last answer and gets a fresh one
@@ -1742,10 +1778,27 @@ async function renderSettings() {
   $('#loadHint').textContent = loadedKey === pick ? 'Already running.' : '';
 }
 $('#cloudOn').onchange = e => { settings.cloud = e.target.checked; store.set('settings', settings); syncCloud(); };
-$('#cloudKey').onchange = e => { settings.cloudKey = e.target.value.trim(); store.set('settings', settings); syncCloud(); };
+function addKeys(raw) {
+  const found = (raw || '').split(/[\s,;]+/).map(s => s.trim().replace(/^["']|["']$/g, '')).filter(s => s.length >= 16);
+  const keys = cloudKeys(); let added = 0;
+  for (const k of found) if (!keys.includes(k)) { keys.push(k); added++; }
+  store.set('settings', settings); syncCloud();
+  return added;
+}
+$('#cloudKey').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); $('#keyAdd').click(); } };
+$('#keyAdd').onclick = () => {
+  const n = addKeys($('#cloudKey').value); $('#cloudKey').value = '';
+  $('#keyMsg').textContent = n ? `✅ Saved ${n} key${n > 1 ? 's' : ''}. OMEGA will use ${n > 1 ? 'them' : 'it'} now.` : 'That doesn\u2019t look like a key (or it\u2019s already saved).';
+};
+$('#keyList').onclick = e => {
+  const b = e.target.closest('[data-delkey]'); if (!b) return;
+  const keys = cloudKeys(); keys.splice(+b.dataset.delkey, 1); store.set('settings', settings); syncCloud(); $('#keyMsg').textContent = 'Removed.';
+};
 function syncCloud() {
-  $('#cloudOn').checked = settings.cloud !== false; $('#cloudKey').value = settings.cloudKey || '';
-  $('#cloudState').textContent = settings.cloud === false ? 'Off: everything stays on this device.' : navigator.onLine === false ? 'On, but you are offline: the phone brain answers.' : (hub.ready && hub.ready.length && !cloudForceFree && cloudProvider() === 'free' ? `On: answers come from OMEGA's own switchboard of free top AI brains (${hub.ready.length} ready: ${hub.ready.join(', ')}), then Pollinations, then the phone brain. Your messages go to whichever one answers. Paste a free key below for your own brain.` : null) || ({ free: 'On: answers come from a big free cloud brain (Pollinations, no key needed) when you are online. Your messages go to Pollinations. Photos and videos stay with the phone brain. Paste a free key below for a smarter, faster brain.', gemini: 'On, with your Google Gemini key: a smart brain that thinks out loud and can see photos. Your messages go to Google. If it hits its free limit, the free cloud or phone brain answers.', groq: 'On, with your Groq key: very fast big open models. Your messages go to Groq.', polli: 'On, with your Pollinations key: faster cloud answers, and it can see photos. Your messages go to Pollinations.', openrouter: 'On, with your OpenRouter key: free models like DeepSeek. Your messages go to OpenRouter.' })[cloudProvider()];
+  $('#cloudOn').checked = settings.cloud !== false;
+  const keys = cloudKeys();
+  $('#keyList').innerHTML = keys.map((k, i) => `<div class="keyrow"><span>${i + 1}. ${esc(CLOUD_NAME[keyProvider(k)])} <span class="kmask">••••${esc(k.slice(-4))}</span>${keyCool[k] > Date.now() ? ' ⚠️ resting' : store.get('keyOk', '') === k ? ' ✅' : ''}</span><button type="button" data-delkey="${i}" aria-label="Remove this key">Remove</button></div>`).join('');
+  $('#cloudState').textContent = (keys.length > 1 && settings.cloud !== false ? `${keys.length} keys saved. OMEGA tries them top to bottom and skips any that fail or hit their limit. ` : '') + (settings.cloud === false ? 'Off: everything stays on this device.' : navigator.onLine === false ? 'On, but you are offline: the phone brain answers.' : (hub.ready && hub.ready.length && !cloudForceFree && cloudProvider() === 'free' ? `On: answers come from OMEGA's own switchboard of free top AI brains (${hub.ready.length} ready: ${hub.ready.join(', ')}), then Pollinations, then the phone brain. Your messages go to whichever one answers. Paste a free key below for your own brain.` : null) || ({ free: 'On: answers come from a big free cloud brain (Pollinations, no key needed) when you are online. Your messages go to Pollinations. Photos and videos stay with the phone brain. Paste a free key below for a smarter, faster brain.', gemini: 'On, with your Google Gemini key: a smart brain that thinks out loud and can see photos. Your messages go to Google. If it hits its free limit, the free cloud or phone brain answers.', groq: 'On, with your Groq key: very fast big open models. Your messages go to Groq.', polli: 'On, with your Pollinations key: faster cloud answers, and it can see photos. Your messages go to Pollinations.', openrouter: 'On, with your OpenRouter key: free models like DeepSeek. Your messages go to OpenRouter.', openai: 'On, with your ChatGPT (OpenAI) key. Your messages go to OpenAI. OpenAI keys usually need credit on the account.', cerebras: 'On, with your Cerebras key: very fast open models. Your messages go to Cerebras.' })[cloudProvider()]);
 }
 $('#autoPick').onchange = e => { settings.auto = e.target.checked; settings.skipRec = null; store.set('settings', settings); if (!chat) refreshWelcome(); };
 $('#loadBtn').onclick = () => {
