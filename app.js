@@ -7,7 +7,7 @@ const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.89';
 const WLLAMA_URL = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/index.js';
 const WLLAMA_WASM = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/wasm/wllama.wasm';
 const PROXY = 'https://proxy.cors.dev/';
-const VERSION = '3.6.1';
+const VERSION = '3.7.0';
 
 const MODELS = [
   { key: 'cpu-qwen3-0.6b', engine: 'cpu', name: 'Qwen3 0.6B', repo: 'unsloth/Qwen3-0.6B-GGUF', file: 'Qwen3-0.6B-Q4_K_M.gguf', sizeMB: 400, memMB: 650, thinking: true, desc: 'Recommended for phones and tablets. Runs on the processor, so it does not crash.' },
@@ -1234,7 +1234,7 @@ const CLOUD_MODELS = {
   cerebras: ['gpt-oss-120b', 'qwen-3-235b-a22b-instruct-2507', 'llama-3.3-70b'],
 };
 let cloudCoolUntil = 0; // after a "too many requests" from the free brain, let the phone brain answer for a bit
-let cloudAbort = null;
+let cloudAbort = null; const cloudAborts = new Set();
 // ---------------- OMEGA tests the apps and games it makes (like a developer would) ----------------
 // Runs the app in a hidden, locked-down frame, taps its buttons and the screen, and collects any errors.
 function selfTest(code, ms = 2600) {
@@ -1415,28 +1415,29 @@ function glue(a, b) {
   return a + b;
 }
 async function cloudChatOnce(messages, o) {
-  cloudAbort = new AbortController(); const sig = cloudAbort.signal;
-  const t = setTimeout(() => cloudAbort.abort(), 120000);
+  const ctl = new AbortController(); cloudAbort = ctl; cloudAborts.add(ctl); const sig = ctl.signal; // each call has its own stop switch (team mode runs several at once)
+  const t = setTimeout(() => ctl.abort(), 120000);
+  const KEY = o.key != null ? o.key : curKey(); // team mode passes the key; otherwise the key being tried now
   try {
-    if (cloudProvider() === 'free' && !hubReady() && Date.now() < cloudCoolUntil) throw new Error('free cloud brain is busy, try again in a minute');
-    const free = cloudProvider() === 'free';
+    const prov = o.key != null ? keyProvider(o.key) : cloudProvider();
+    if (prov === 'free' && !hubReady() && Date.now() < cloudCoolUntil) throw new Error('free cloud brain is busy, try again in a minute');
+    const free = prov === 'free';
     const busyNote = setTimeout(() => { if (o.ui && !o.got) o.ui.wt.textContent = '☁️ The free cloud brain is busy, your answer is on the way…'; }, 9000);
-    const prov = cloudProvider();
     const textOnly = ms => ms.map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : m.content.filter(p => p.type === 'text').map(p => p.text).join('\n') }));
     const deep = !!o.deep; // Think chip on: think harder
     const request = model => {
-      if (prov === 'gemini') return fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + curKey().trim() },
+      if (prov === 'gemini') return fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + KEY.trim() },
         body: JSON.stringify({ model, messages, stream: true, max_tokens: Math.max(o.maxTokens, 4000), temperature: o.temperature, extra_body: { google: { thinking_config: { thinking_level: deep ? 'high' : 'low', include_thoughts: true } } } }) });
-      if (prov === 'groq') return fetch('https://api.groq.com/openai/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + curKey().trim() },
+      if (prov === 'groq') return fetch('https://api.groq.com/openai/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + KEY.trim() },
         body: JSON.stringify({ model, messages: textOnly(messages), stream: true, max_tokens: o.maxTokens, temperature: o.temperature, ...(/gpt-oss|qwen3|r1/.test(model) ? { reasoning_format: 'parsed', reasoning_effort: deep ? 'high' : 'medium' } : {}) }) });
-      if (prov === 'openai') return fetch('https://api.openai.com/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + curKey() },
+      if (prov === 'openai') return fetch('https://api.openai.com/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + KEY },
         body: JSON.stringify({ model, messages, stream: true, max_completion_tokens: Math.max(o.maxTokens, 4000), ...(deep ? { reasoning_effort: 'high' } : {}) }) });
-      if (prov === 'cerebras') return fetch('https://api.cerebras.ai/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + curKey() },
+      if (prov === 'cerebras') return fetch('https://api.cerebras.ai/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + KEY },
         body: JSON.stringify({ model, messages: textOnly(messages), stream: true, max_completion_tokens: o.maxTokens, temperature: o.temperature }) });
-      if (EXTRA[prov]) return fetch(EXTRA[prov].url, { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + curKey().trim() },
+      if (EXTRA[prov]) return fetch(EXTRA[prov].url, { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + KEY.trim() },
         body: JSON.stringify({ model, messages: EXTRA[prov].sees ? messages : textOnly(messages), stream: true, max_tokens: o.maxTokens, temperature: o.temperature }) });
-      if (prov === 'polli') return fetch('https://gen.pollinations.ai/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + curKey() }, body: JSON.stringify({ model: 'openai', messages, stream: true, max_tokens: o.maxTokens, temperature: o.temperature }) });
-      if (prov === 'openrouter') return fetch('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + curKey(), 'X-Title': 'OMEGA' },
+      if (prov === 'polli') return fetch('https://gen.pollinations.ai/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + KEY }, body: JSON.stringify({ model: 'openai', messages, stream: true, max_tokens: o.maxTokens, temperature: o.temperature }) });
+      if (prov === 'openrouter') return fetch('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + KEY, 'X-Title': 'OMEGA' },
         body: JSON.stringify({ model, messages, stream: true, max_tokens: o.maxTokens, temperature: o.temperature }) });
       return fetch('https://text.pollinations.ai/openai', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'openai', messages: textOnly(messages), stream: true, max_tokens: o.maxTokens, temperature: o.temperature, private: true, referrer: 'omega', ...(deep ? { reasoning_effort: 'high' } : {}) }) });
     };
@@ -1447,7 +1448,7 @@ async function cloudChatOnce(messages, o) {
     const textOnlyMsgs = messages.map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : m.content.filter(p => p.type === 'text').map(p => p.text).join('\n') }));
     let hubName = '';
     let r = null, used = null;
-    if (hubReady()) { // OMEGA's own switchboard first: the strongest free brains
+    if (free && hubReady()) { // OMEGA's own switchboard first: the strongest free brains
       try {
         const h = await fetch(HUB + '/api/chat', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: textOnlyMsgs, max_tokens: o.maxTokens, temperature: o.temperature }) });
         if (h.ok && h.body) { r = h; hubName = h.headers.get('X-Omega-Provider') || 'free brain'; }
@@ -1464,7 +1465,7 @@ async function cloudChatOnce(messages, o) {
     if (r && !r.ok && r.status === 404 && (EXTRA[prov] || prov === 'openai' || prov === 'cerebras')) { // none of the usual models exist: ask the service which ones it has
       try {
         const base = (EXTRA[prov] ? EXTRA[prov].url : prov === 'openai' ? 'https://api.openai.com/v1/chat/completions' : 'https://api.cerebras.ai/v1/chat/completions').replace(/\/chat\/completions$/, '');
-        const ml = await (await fetch(base + '/models', { signal: sig, headers: { Authorization: 'Bearer ' + curKey().trim() } })).json();
+        const ml = await (await fetch(base + '/models', { signal: sig, headers: { Authorization: 'Bearer ' + KEY.trim() } })).json();
         const ids = (ml.data || []).map(x => x.id).filter(id => !/embed|whisper|tts|audio|image|dall|moderation|rerank|ocr|guard/i.test(id));
         for (const model of ids.slice(0, 4)) { r = await request(model); used = model; if (r.ok) { CLOUD_MODELS[prov] = [model, ...CLOUD_MODELS[prov]]; break; } }
       } catch (_) { }
@@ -1481,7 +1482,7 @@ async function cloudChatOnce(messages, o) {
         const l = ln.trim(); if (!l.startsWith('data:')) continue; const d = l.slice(5).trim(); if (d === '[DONE]') continue;
         try { const j = JSON.parse(d); if (j.error) throw new Error(j.error.message || 'cloud error'); model = j.model || model; const ch0 = j.choices && j.choices[0]; if (ch0 && ch0.finish_reason) o.finish = ch0.finish_reason; const dl = (ch0 && ch0.delta) || {}; reason += dl.reasoning || dl.reasoning_content || ''; let ct = dl.content || ''; if (ct && (inThought || /<thought>/.test(ct))) { const parts = ct.split(/(<\/?thought>)/); ct = ''; for (const p of parts) { if (p === '<thought>') inThought = true; else if (p === '</thought>') inThought = false; else if (inThought) reason += p; else ct += p; } } if (dl.extra_content && dl.extra_content.google && dl.extra_content.google.thought) { reason += ct; ct = ''; } text += ct; } catch (e) { if (/cloud error|error/i.test(e.message) && !/JSON/.test(e.message)) throw e; }
         o.got = true; o.onText(reason ? '<think>' + reason + (text ? '</think>' : '') + text : text);
-        if (stopFlag) { cloudAbort.abort(); break; }
+        if (stopFlag) { ctl.abort(); break; }
       }
       if (stopFlag) break;
     }
@@ -1489,7 +1490,7 @@ async function cloudChatOnce(messages, o) {
     if (!text.trim() && !stopFlag) throw new Error('empty answer');
     return reason ? '<think>' + reason + '</think>' + text : text;
   } catch (e) { if (sig.aborted && stopFlag) return ''; if (sig.aborted) throw new Error('took too long'); throw e; }
-  finally { clearTimeout(t); }
+  finally { clearTimeout(t); cloudAborts.delete(ctl); }
 }
 const toDataURL = buf => new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(new Blob([buf], { type: 'image/jpeg' })); });
 async function answerInCloud(text, live, att, ui, turn, media = []) {
@@ -1516,12 +1517,64 @@ async function answerInCloud(text, live, att, ui, turn, media = []) {
   render(ui.ans, '', true); if (window.OMEGA) window.OMEGA.lastPrompt = messages;
   let raw;
   if (memPending) { ui.wt.textContent = '🧠 Saving a memory first…'; await Promise.race([memPending, sleep(12000)]); } // the free cloud answers one thing at a time
-  try { raw = await cloudChat(messages, o); }
+  let team = null;
+  const tk = teamKeys();
+  if (!media.length && tk.length >= 2 && teamWanted(text, codeMode, o.deep)) { try { team = await teamAnswer(messages, o, ui, tk, codeMode); } catch (e) { if (stopFlag) throw e; } if (team) raw = team.raw; }
+  if (raw == null && stopFlag) raw = '';
+  if (raw == null) try { raw = await cloudChat(messages, o); }
   catch (e) { if (stopFlag || !/empty answer|took too long|Failed to fetch|network|HTTP 5/i.test(e.message)) throw e; ui.wt.textContent = '☁️ Asking the cloud brain again…'; raw = await cloudChat(messages, o); } // the free cloud sometimes hiccups: one quick retry
   const th = thoughtsOf(raw); if (th) { turn.think = clip(th, 6000); showThoughts(ui, raw, t0, true); }
   turn.text = thinkStrip(raw).trim() || '(stopped)';
-  ui.wt.textContent = `☁️ Answered by ${o.model === 'free cloud' ? 'the free cloud brain' : o.brain || CLOUD_NAME[cloudProvider()]}${o.model && o.model !== 'free cloud' ? ' (' + o.model.replace(/:free$/, '').replace(/^models\//, '') + ')' : ''}`;
+  if (team && team.team.length > 1) ui.wt.textContent = `👥 Team answer: ${team.team.join(' + ')} · combined by ${team.by}`;
+  else if (team) ui.wt.textContent = `☁️ Answered by ${team.by}${team.model ? ' (' + team.model + ')' : ''}`;
+  else ui.wt.textContent = `☁️ Answered by ${o.model === 'free cloud' ? 'the free cloud brain' : o.brain || CLOUD_NAME[cloudProvider()]}${o.model && o.model !== 'free cloud' ? ' (' + o.model.replace(/:free$/, '').replace(/^models\//, '') + ')' : ''}`;
   render(ui.ans, turn.text);
+}
+// ---- team mode: ask all your AI keys at once, then one of them combines the best parts ----
+const teamKeys = () => cloudKeys().filter(k => !NO_PHONE[keyProvider(k)] && !(keyCool[k] > Date.now()));
+function teamWanted(text, codeMode, deep) {
+  const m = settings.team || 'auto';
+  if (m === 'off') return false; if (m === 'always') return true;
+  return deep || codeMode || text.length > 180 || /\b(explain|why|how (do|does|can|should)|compare|vs\.?|versus|best|plan|strategy|analy[sz]e|research|pros and cons|decide|choose|essay|business|math|solve|prove|step by step|ideas?)\b/i.test(text);
+}
+const COMBINER_RANK = ['gemini', 'openai', 'xai', 'mistral', 'deepseek', 'openrouter', 'groq', 'cerebras', 'together', 'huggingface', 'polli'];
+async function teamAnswer(messages, o, ui, keys, codeMode) {
+  const names = keys.map(keyName), t0 = Date.now();
+  ui.work.hidden = false; ui.wt.textContent = `👥 Asking ${keys.length} brains at once…`;
+  step(ui, `👥 Asking ${keys.length} brains at once: ${names.join(', ')}`);
+  const drafts = []; let pending = keys.length, firstAt = 0, wake = null;
+  keys.forEach((k, i) => {
+    const oi = { key: k, deep: o.deep, maxTokens: o.maxTokens, temperature: o.temperature, onText: () => { } };
+    Promise.race([cloudChatLong(messages, oi), sleep(codeMode ? 100000 : 50000).then(() => { throw new Error('took too long'); })])
+      .then(out => { const txt = thinkStrip(out).trim(); if (!txt) throw new Error('empty answer'); drafts.push({ k, name: names[i], text: txt, model: oi.model || '' }); store.set('keyOk', k); step(ui, `✓ ${names[i]} answered (${Math.round((Date.now() - t0) / 1000)}s)`); if (!firstAt) firstAt = Date.now(); })
+      .catch(e => { if (!stopFlag) { step(ui, `✗ ${names[i]} didn't answer (${clip(e.message, 40)})`); keyCool[k] = Date.now() + 10 * 60 * 1000; } })
+      .finally(() => { pending--; wake && wake(); });
+  });
+  // wait for everyone, but once one has answered give the slow ones only a little longer
+  while (pending > 0 && !stopFlag) {
+    if (firstAt && Date.now() - firstAt > (codeMode ? 25000 : 12000)) { step(ui, `⏱ Not waiting for the slow ones`); break; }
+    await new Promise(r => { wake = r; setTimeout(r, 500); });
+  }
+  if (stopFlag || !drafts.length) return null;
+  ui.wt.textContent = `👥 ${drafts.length} of ${keys.length} brains answered`;
+  if (drafts.length === 1) { o.onText(drafts[0].text); return { raw: drafts[0].text, team: [drafts[0].name], by: drafts[0].name, model: drafts[0].model }; }
+  const ok = drafts.map(d => d.k);
+  const comb = [...ok].sort((x, y) => { const r = p => { const i = COMBINER_RANK.indexOf(keyProvider(p)); return i < 0 ? 99 : i; }; return r(x) - r(y); })[0];
+  const last = messages[messages.length - 1];
+  const q = typeof last.content === 'string' ? last.content : last.content.filter(p => p.type === 'text').map(p => p.text).join('\n');
+  const draftText = drafts.map((d, i) => `[Answer ${i + 1}]\n${clip(d.text, codeMode ? 14000 : 5000)}`).join('\n\n');
+  const cm = [...messages.slice(0, -1), { role: 'user', content: q + `\n\n---\n(Private note for you, not from the user: ${drafts.length} other AI models already answered the message above. Their answers are below and may contain mistakes. Write the single best final answer to the user's message: keep what is correct and useful from each, fix any errors, drop repetition, and follow all your usual rules and the user's style.${codeMode ? ' For code: start from the strongest version, add real improvements from the others, and give ONE complete working file.' : ''} Never mention other models, answers, drafts or combining.)\n\n${draftText}` }];
+  step(ui, `🧩 ${keyName(comb)} is combining the best parts`); ui.wt.textContent = '🧩 Combining the best parts…';
+  const oc = { ...o, key: comb, maxTokens: Math.max(o.maxTokens, codeMode ? 8000 : 2500) };
+  try {
+    const out = await cloudChatLong(cm, oc);
+    if (!thinkStrip(out).trim()) throw new Error('empty answer');
+    return { raw: out, team: drafts.map(d => d.name), by: keyName(comb), model: oc.model || '' };
+  } catch (e) {
+    if (stopFlag) return null;
+    step(ui, `↪️ Combining failed, using ${drafts[0].name}'s answer`);
+    o.onText(drafts[0].text); return { raw: drafts[0].text, team: [drafts[0].name], by: drafts[0].name, model: drafts[0].model };
+  }
 }
 // ask again: removes the last answer and gets a fresh one
 function redoLast() {
@@ -1581,7 +1634,7 @@ const SEND_SVG = sendBtn.innerHTML, STOP_SVG = '<svg width="14" height="14" view
 function setBusy(b) { busy = b; sendBtn.innerHTML = b ? STOP_SVG : SEND_SVG; sendBtn.setAttribute('aria-label', b ? 'Stop' : 'Send'); grow(); }
 // Stop answers right away, even while the brain is still reading a long chat (it finishes reading quietly in the background)
 let enginePending = null; const stopWaiters = [];
-sendBtn.onclick = () => { if (busy) { stopFlag = true; stopWaiters.splice(0).forEach(f => f()); try { engine && engine.stop(); } catch (e) { } try { cloudAbort && cloudAbort.abort(); } catch (e) { } } else send(); };
+sendBtn.onclick = () => { if (busy) { stopFlag = true; stopWaiters.splice(0).forEach(f => f()); try { engine && engine.stop(); } catch (e) { } try { cloudAborts.forEach(c => c.abort()); } catch (e) { } try { cloudAbort && cloudAbort.abort(); } catch (e) { } } else send(); };
 
 async function send(opts = {}) {
   if (busy) return;
@@ -1979,6 +2032,8 @@ $('#addFact').onclick = () => { const v = $('#newFact').value.trim(); if (!v) re
 $('#autoMem').checked = settings.autoMemory !== false;
 $('#autoMem').onchange = e => { settings.autoMemory = e.target.checked; store.set('settings', settings); };
 $('#pastChats').checked = settings.pastChats !== false;
+$('#teamMode').value = settings.team || 'auto';
+$('#teamMode').onchange = e => { settings.team = e.target.value; store.set('settings', settings); };
 $('#pastChats').onchange = e => { settings.pastChats = e.target.checked; store.set('settings', settings); };
 $('#newFact').addEventListener('keydown', e => { if (e.key === 'Enter') $('#addFact').click(); });
 
