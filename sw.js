@@ -1,8 +1,8 @@
 // Offline support: keeps OMEGA's app files and the brain engine (wllama) on the device.
 // The brain itself is saved by wllama in the browser's private file storage.
-const CACHE = 'omega-shell-v28';
+const CACHE = 'omega-shell-v29';
 const ENGINE = 'omega-engine-v1';
-const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'games.js', 'play.html', 'worker.js', 'manifest.webmanifest', 'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
+const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'games.js', 'play.html', 'worker.js', 'manifest.webmanifest', 'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'video.js', 'ffmpeg/ffmpeg.js', 'ffmpeg/814.ffmpeg.js'];
 // 'reload' skips the browser's 10-minute cache, so the saved copy is always the newest version
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => (k.startsWith('omega-shell-') && k !== CACHE) || (k.startsWith('omega-engine-') && k !== ENGINE)).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
@@ -23,7 +23,7 @@ self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   const u = new URL(e.request.url);
   // brain engine code from the CDN: pinned version, so save it once and serve it from the phone (works offline)
-  if (u.hostname === 'cdn.jsdelivr.net' && u.pathname.startsWith('/npm/@wllama/wllama@4.0.0/')) {
+  if (u.hostname === 'cdn.jsdelivr.net' && (u.pathname.startsWith('/npm/@wllama/wllama@4.0.0/') || u.pathname.startsWith('/npm/@ffmpeg/core@0.12.10/'))) {
     e.respondWith(caches.open(ENGINE).then(c => c.match(e.request).then(hit => hit || fetch(e.request).then(r => { if (r.ok) c.put(e.request, r.clone()); return r; }))));
     return;
   }

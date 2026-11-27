@@ -7,7 +7,7 @@ const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.89';
 const WLLAMA_URL = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/index.js';
 const WLLAMA_WASM = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/wasm/wllama.wasm';
 const PROXY = 'https://proxy.cors.dev/';
-const VERSION = '3.3.0';
+const VERSION = '3.4.0';
 
 const MODELS = [
   { key: 'cpu-qwen3-0.6b', engine: 'cpu', name: 'Qwen3 0.6B', repo: 'unsloth/Qwen3-0.6B-GGUF', file: 'Qwen3-0.6B-Q4_K_M.gguf', sizeMB: 400, memMB: 650, thinking: true, desc: 'Recommended for phones and tablets. Runs on the processor, so it does not crash.' },
@@ -175,12 +175,15 @@ async function makeLink(code) {
   const u = new URL('play.html', location.href).href + '#' + hash;
   linkCache.set(code, u); return u;
 }
+// apps run in a locked-down frame where saving data (localStorage) is blocked; give them a pretend one so they don't crash
+const STORAGE_SHIM = "<script>(function(){function mem(){var d={};return{getItem:function(k){return Object.prototype.hasOwnProperty.call(d,k)?d[k]:null},setItem:function(k,v){d[k]=String(v)},removeItem:function(k){delete d[k]},clear:function(){d={}},key:function(i){return Object.keys(d)[i]||null},get length(){return Object.keys(d).length}}}['localStorage','sessionStorage'].forEach(function(n){try{window[n].getItem('x')}catch(e){try{Object.defineProperty(window,n,{value:mem(),configurable:true})}catch(_){}}})})();<\/script>";
+const withShim = code => /<head[^>]*>/i.test(code) ? code.replace(/<head[^>]*>/i, m => m + STORAGE_SHIM) : STORAGE_SHIM + code;
 function openPlayer(code) {
   closePlayer();
   const kind = appKind(code, '');
   const p = document.createElement('div'); p.className = 'player'; p.id = 'player';
   p.innerHTML = `<div class="pbar"><button class="pclose" aria-label="Close">✕ Close</button><span class="ptitle">${esc(appTitle(code, kind))}</span><button class="pcopy">🔗 Copy link</button></div>`;
-  const f = document.createElement('iframe'); f.setAttribute('sandbox', 'allow-scripts allow-forms allow-modals allow-pointer-lock'); f.setAttribute('allow', 'autoplay; fullscreen'); f.srcdoc = code; p.appendChild(f);
+  const f = document.createElement('iframe'); f.setAttribute('sandbox', 'allow-scripts allow-forms allow-modals allow-pointer-lock'); f.setAttribute('allow', 'autoplay; fullscreen'); f.srcdoc = withShim(code); p.appendChild(f);
   document.body.appendChild(p);
   p.querySelector('.pclose').onclick = closePlayer;
   p.querySelector('.pcopy').onclick = async e => { const b = e.currentTarget, u = await makeLink(code); if (navigator.share) { navigator.share({ title: appTitle(code, kind), url: u }).catch(() => { }); } else copyText(u, b); };
@@ -204,7 +207,7 @@ document.addEventListener('click', e => {
 // ---------------- code runner ----------------
 function runCode({ lang, code }, out) {
   out.innerHTML = '';
-  if (/^(html|htm|svg)$/.test(lang)) { const f = document.createElement('iframe'); f.setAttribute('sandbox', 'allow-scripts allow-forms allow-modals'); f.srcdoc = code; out.appendChild(f); return; }
+  if (/^(html|htm|svg)$/.test(lang)) { const f = document.createElement('iframe'); f.setAttribute('sandbox', 'allow-scripts allow-forms allow-modals'); f.srcdoc = withShim(code); out.appendChild(f); return; }
   const line = (t, bad) => { const d = document.createElement('div'); if (bad) d.className = 'e'; d.textContent = t; out.appendChild(d); };
   runBoxed(/^(py|python)$/.test(lang) ? 'py' : 'js', code, line);
 }
@@ -489,6 +492,66 @@ function isClockQuestion(t) {
   return /\b(what time is it|what'?s the time|whats the time|what is the time|what time it is|time is it|current time|time right now|what'?s the time now|what day is it|what day is today|what'?s today'?s date|what is today'?s date|what'?s the date|whats the date|what is the date|today'?s date|date today|what date is it|what'?s today|what is today|what year is it|what month is it)\b/.test(t)
     || /^(what time|time|clock|current time|local time|what'?s the time) (in|at) [a-z]/.test(t) || /^(what time|the time|time)$/.test(t);
 }
+// ---------------- stock prices (Yahoo Finance through the free proxy; may be delayed) ----------------
+const STOCKS = { apple: 'AAPL', tesla: 'TSLA', nvidia: 'NVDA', microsoft: 'MSFT', amazon: 'AMZN', google: 'GOOGL', alphabet: 'GOOGL', meta: 'META', facebook: 'META', netflix: 'NFLX', amd: 'AMD', intel: 'INTC', disney: 'DIS', nike: 'NKE', 'coca cola': 'KO', coke: 'KO', walmart: 'WMT', costco: 'COST', gamestop: 'GME', amc: 'AMC', palantir: 'PLTR', uber: 'UBER', spotify: 'SPOT', starbucks: 'SBUX', mcdonalds: 'MCD', "mcdonald's": 'MCD', boeing: 'BA', ford: 'F', 'general motors': 'GM', paypal: 'PYPL', visa: 'V', jpmorgan: 'JPM', 'home depot': 'HD', 'lowes': 'LOW', "lowe's": 'LOW', 'take two': 'TTWO', 'take-two': 'TTWO', rockstar: 'TTWO', sony: 'SONY', nintendo: 'NTDOY', 'roblox': 'RBLX', 'coinbase': 'COIN', 'robinhood': 'HOOD', 's&p 500': '^GSPC', 's&p': '^GSPC', 'sp500': '^GSPC', 'dow jones': '^DJI', 'the dow': '^DJI', nasdaq: '^IXIC', spy: 'SPY', qqq: 'QQQ' };
+function stockSymbols(text) {
+  const t = text.toLowerCase(), out = new Set();
+  if (!/\b(stocks?|shares?|share price|market|ticker|trading|nasdaq|s&p|dow|etf)\b|\$[a-z]{1,5}\b/i.test(text)) return [];
+  for (const m of text.matchAll(/\$([A-Za-z]{1,5})\b/g)) out.add(m[1].toUpperCase());
+  for (const [k, v] of Object.entries(STOCKS)) if (new RegExp('(^|[^a-z])' + k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '([^a-z]|$)').test(t)) out.add(v);
+  for (const m of text.matchAll(/\b([A-Z]{2,5})\b(?=\s+(stock|shares?|price))/g)) out.add(m[1]);
+  if (!out.size && /\b(stock market|the market|markets|stocks today)\b/.test(t)) ['^GSPC', '^DJI', '^IXIC'].forEach(s => out.add(s));
+  return [...out].slice(0, 4);
+}
+async function toolStock(text) {
+  const syms = stockSymbols(text); if (!syms.length) throw new Error('no stock');
+  const rows = await Promise.all(syms.map(s => fetchT(PROXY + `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(s)}?range=5d&interval=1d`, { ms: 12000 }).then(d => {
+    const m = d.chart.result[0].meta, p = m.regularMarketPrice, prev = m.chartPreviousClose || m.previousClose, ch = p - prev, pct = prev ? ch / prev * 100 : 0;
+    const when = m.regularMarketTime ? new Date(m.regularMarketTime * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }) : '';
+    return `${m.longName || m.shortName || s} (${m.symbol}): ${p.toLocaleString('en-US', { maximumFractionDigits: 2 })} ${m.currency || ''}, ${ch >= 0 ? '+' : ''}${ch.toFixed(2)} (${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%) vs the last close${when ? ', as of ' + when : ''}`;
+  }).catch(() => null)));
+  const lines = rows.filter(Boolean); if (!lines.length) throw new Error('no prices');
+  return { label: 'Stocks', plain: '📈 ' + lines.join('\n'), text: 'STOCK PRICES (Yahoo Finance, live or slightly delayed). Give the numbers; this is info, not investment advice:\n' + lines.join('\n'), sources: [{ title: 'Yahoo Finance', url: 'https://finance.yahoo.com/quote/' + encodeURIComponent(syms[0]) }] };
+}
+
+// ---------------- sports scores (ESPN's free scoreboard, no key) ----------------
+const TEAMS = {"basketball/nba":[["atl","Atlanta Hawks","hawks","atlanta"],["bos","Boston Celtics","celtics","boston"],["bkn","Brooklyn Nets","nets","brooklyn"],["cha","Charlotte Hornets","hornets","charlotte"],["chi","Chicago Bulls","bulls","chicago"],["cle","Cleveland Cavaliers","cavaliers","cleveland"],["dal","Dallas Mavericks","mavericks","dallas"],["den","Denver Nuggets","nuggets","denver"],["det","Detroit Pistons","pistons","detroit"],["gs","Golden State Warriors","warriors","golden state"],["hou","Houston Rockets","rockets","houston"],["ind","Indiana Pacers","pacers","indiana"],["lac","LA Clippers","clippers","la"],["lal","Los Angeles Lakers","lakers","los angeles"],["mem","Memphis Grizzlies","grizzlies","memphis"],["mia","Miami Heat","heat","miami"],["mil","Milwaukee Bucks","bucks","milwaukee"],["min","Minnesota Timberwolves","timberwolves","minnesota"],["no","New Orleans Pelicans","pelicans","new orleans"],["ny","New York Knicks","knicks","new york"],["okc","Oklahoma City Thunder","thunder","oklahoma city"],["orl","Orlando Magic","magic","orlando"],["phi","Philadelphia 76ers","76ers","philadelphia"],["phx","Phoenix Suns","suns","phoenix"],["por","Portland Trail Blazers","trail blazers","portland"],["sac","Sacramento Kings","kings","sacramento"],["sa","San Antonio Spurs","spurs","san antonio"],["tor","Toronto Raptors","raptors","toronto"],["utah","Utah Jazz","jazz","utah"],["wsh","Washington Wizards","wizards","washington"]],"football/nfl":[["ari","Arizona Cardinals","cardinals","arizona"],["atl","Atlanta Falcons","falcons","atlanta"],["bal","Baltimore Ravens","ravens","baltimore"],["buf","Buffalo Bills","bills","buffalo"],["car","Carolina Panthers","panthers","carolina"],["chi","Chicago Bears","bears","chicago"],["cin","Cincinnati Bengals","bengals","cincinnati"],["cle","Cleveland Browns","browns","cleveland"],["dal","Dallas Cowboys","cowboys","dallas"],["den","Denver Broncos","broncos","denver"],["det","Detroit Lions","lions","detroit"],["gb","Green Bay Packers","packers","green bay"],["hou","Houston Texans","texans","houston"],["ind","Indianapolis Colts","colts","indianapolis"],["jax","Jacksonville Jaguars","jaguars","jacksonville"],["kc","Kansas City Chiefs","chiefs","kansas city"],["lv","Las Vegas Raiders","raiders","las vegas"],["lac","Los Angeles Chargers","chargers","los angeles"],["lar","Los Angeles Rams","rams","los angeles"],["mia","Miami Dolphins","dolphins","miami"],["min","Minnesota Vikings","vikings","minnesota"],["ne","New England Patriots","patriots","new england"],["no","New Orleans Saints","saints","new orleans"],["nyg","New York Giants","giants","new york"],["nyj","New York Jets","jets","new york"],["phi","Philadelphia Eagles","eagles","philadelphia"],["pit","Pittsburgh Steelers","steelers","pittsburgh"],["sf","San Francisco 49ers","49ers","san francisco"],["sea","Seattle Seahawks","seahawks","seattle"],["tb","Tampa Bay Buccaneers","buccaneers","tampa bay"],["ten","Tennessee Titans","titans","tennessee"],["wsh","Washington Commanders","commanders","washington"]],"baseball/mlb":[["ari","Arizona Diamondbacks","diamondbacks","arizona"],["ath","Athletics","athletics","athletics"],["atl","Atlanta Braves","braves","atlanta"],["bal","Baltimore Orioles","orioles","baltimore"],["bos","Boston Red Sox","red sox","boston"],["chc","Chicago Cubs","cubs","chicago"],["chw","Chicago White Sox","white sox","chicago"],["cin","Cincinnati Reds","reds","cincinnati"],["cle","Cleveland Guardians","guardians","cleveland"],["col","Colorado Rockies","rockies","colorado"],["det","Detroit Tigers","tigers","detroit"],["hou","Houston Astros","astros","houston"],["kc","Kansas City Royals","royals","kansas city"],["laa","Los Angeles Angels","angels","los angeles"],["lad","Los Angeles Dodgers","dodgers","los angeles"],["mia","Miami Marlins","marlins","miami"],["mil","Milwaukee Brewers","brewers","milwaukee"],["min","Minnesota Twins","twins","minnesota"],["nym","New York Mets","mets","new york"],["nyy","New York Yankees","yankees","new york"],["phi","Philadelphia Phillies","phillies","philadelphia"],["pit","Pittsburgh Pirates","pirates","pittsburgh"],["sd","San Diego Padres","padres","san diego"],["sf","San Francisco Giants","giants","san francisco"],["sea","Seattle Mariners","mariners","seattle"],["stl","St. Louis Cardinals","cardinals","st. louis"],["tb","Tampa Bay Rays","rays","tampa bay"],["tex","Texas Rangers","rangers","texas"],["tor","Toronto Blue Jays","blue jays","toronto"],["wsh","Washington Nationals","nationals","washington"]],"hockey/nhl":[["ana","Anaheim Ducks","ducks","anaheim"],["bos","Boston Bruins","bruins","boston"],["buf","Buffalo Sabres","sabres","buffalo"],["cgy","Calgary Flames","flames","calgary"],["car","Carolina Hurricanes","hurricanes","carolina"],["chi","Chicago Blackhawks","blackhawks","chicago"],["col","Colorado Avalanche","avalanche","colorado"],["cbj","Columbus Blue Jackets","blue jackets","columbus"],["dal","Dallas Stars","stars","dallas"],["det","Detroit Red Wings","red wings","detroit"],["edm","Edmonton Oilers","oilers","edmonton"],["fla","Florida Panthers","panthers","florida"],["la","Los Angeles Kings","kings","los angeles"],["min","Minnesota Wild","wild","minnesota"],["mtl","Montreal Canadiens","canadiens","montreal"],["nsh","Nashville Predators","predators","nashville"],["nj","New Jersey Devils","devils","new jersey"],["nyi","New York Islanders","islanders","new york"],["nyr","New York Rangers","rangers","new york"],["ott","Ottawa Senators","senators","ottawa"],["phi","Philadelphia Flyers","flyers","philadelphia"],["pit","Pittsburgh Penguins","penguins","pittsburgh"],["sj","San Jose Sharks","sharks","san jose"],["sea","Seattle Kraken","kraken","seattle"],["stl","St. Louis Blues","blues","st. louis"],["tb","Tampa Bay Lightning","lightning","tampa bay"],["tor","Toronto Maple Leafs","maple leafs","toronto"],["utah","Utah Mammoth","mammoth","utah"],["van","Vancouver Canucks","canucks","vancouver"],["vgk","Vegas Golden Knights","golden knights","vegas"],["wsh","Washington Capitals","capitals","washington"],["wpg","Winnipeg Jets","jets","winnipeg"]],"basketball/wnba":[["atl","Atlanta Dream","dream","atlanta"],["chi","Chicago Sky","sky","chicago"],["dal","Dallas Wings","wings","dallas"],["gs","Golden State Valkyries","valkyries","golden state"],["ind","Indiana Fever","fever","indiana"],["lv","Las Vegas Aces","aces","las vegas"],["la","Los Angeles Sparks","sparks","los angeles"],["min","Minnesota Lynx","lynx","minnesota"],["ny","New York Liberty","liberty","new york"],["phx","Phoenix Mercury","mercury","phoenix"],["por","Portland Fire","fire","portland"],["sea","Seattle Storm","storm","seattle"],["tor","Toronto Tempo","tempo","toronto"],["wsh","Washington Mystics","mystics","washington"]]};
+const SEASON = { 'football/nfl': [9, 10, 11, 12, 1, 2], 'basketball/nba': [10, 11, 12, 1, 2, 3, 4, 5, 6], 'hockey/nhl': [10, 11, 12, 1, 2, 3, 4, 5, 6], 'baseball/mlb': [3, 4, 5, 6, 7, 8, 9, 10], 'basketball/wnba': [5, 6, 7, 8, 9, 10] };
+const SPORT_WORDS = /\b(how did|how are|doing|game|games|won|win|wins|lose|lost|loses|score|scores|play|plays|playing|played|next|tonight|last night|yesterday|beat|record|vs\.?|versus|season|schedule|match|kick ?off|tip ?off|standings)\b/;
+function findTeam(text) {
+  const t = ' ' + text.toLowerCase().replace(/[’']/g, "'") + ' ';
+  const hint = /\b(nfl|football)\b/.test(t) ? 'football/nfl' : /\b(nba|basketball)\b/.test(t) ? 'basketball/nba' : /\b(nhl|hockey)\b/.test(t) ? 'hockey/nhl' : /\b(mlb|baseball)\b/.test(t) ? 'baseball/mlb' : /\bwnba\b/.test(t) ? 'basketball/wnba' : '';
+  const month = new Date().getMonth() + 1, hits = [];
+  const t2 = t.replace(/\b(la|l\.a\.)\b/g, 'los angeles').replace(/\bny\b/g, 'new york').replace(/\bsf\b/g, 'san francisco');
+  for (const [lg, list] of Object.entries(TEAMS)) for (const [abbr, full, nick, loc] of list) {
+    const re = new RegExp('\\b(' + full.toLowerCase().replace(/[.]/g, '\\.') + '|' + nick.replace(/[.]/g, '\\.') + ')\\b');
+    if (re.test(t)) hits.push({ lg, abbr, full, nick, exact: t.includes(full.toLowerCase()), here: !!loc && t2.includes(loc) });
+  }
+  if (!hits.length) return null;
+  const score = h => (h.exact ? 100 : 0) + (h.here ? 40 : 0) + (h.lg === hint ? 50 : 0) + ((SEASON[h.lg] || []).includes(month) ? 10 : 0) + (5 - Object.keys(TEAMS).indexOf(h.lg));
+  const best = hits.sort((a, b) => score(b) - score(a))[0];
+  if (!best.exact && !hint && !SPORT_WORDS.test(t)) return null; // "the heat" or "the magic" alone isn't about a team
+  return best;
+}
+async function toolSports(text) {
+  const tm = findTeam(text); if (!tm) throw new Error('no team');
+  const d = await fetchT(`https://site.api.espn.com/apis/site/v2/sports/${tm.lg}/teams/${tm.abbr}/schedule`, { ms: 15000 });
+  const evs = (d.events || []).map(e => { const c = e.competitions && e.competitions[0]; return c ? { e, c, when: new Date(e.date), st: (c.status && c.status.type) || {} } : null; }).filter(Boolean);
+  const done = evs.filter(x => x.st.completed).sort((a, b) => b.when - a.when);
+  const live = evs.find(x => x.st.state === 'in');
+  const next = evs.filter(x => !x.st.completed && x.st.state === 'pre' && x.when > Date.now() - 3 * 3600e3).sort((a, b) => a.when - b.when)[0];
+  const side = x => { const us = x.c.competitors.find(c => (c.team.abbreviation || '').toLowerCase() === tm.abbr) || x.c.competitors[0], them = x.c.competitors.find(c => c !== us); return { us, them, home: us.homeAway === 'home' }; };
+  const sc = c => (c.score && (c.score.displayValue || c.score.value)) || c.score || '0';
+  const day = w => w.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }), time = w => w.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
+  const lines = [];
+  if (live) { const s = side(live); lines.push(`LIVE NOW: ${s.us.team.shortDisplayName} ${sc(s.us)}, ${s.them.team.shortDisplayName} ${sc(s.them)} (${live.st.shortDetail || live.st.detail || 'in progress'})`); }
+  if (done[0]) { const s = side(done[0]), w = s.us.winner ? 'won' : s.them.winner ? 'lost' : 'tied'; lines.push(`Last game (${day(done[0].when)}): ${tm.full} ${w}, ${s.us.team.shortDisplayName} ${sc(s.us)} - ${s.them.team.shortDisplayName} ${sc(s.them)} (${s.home ? 'home' : 'away'})`); }
+  if (done[1]) { const s = side(done[1]); lines.push(`Game before that (${day(done[1].when)}): ${s.us.team.shortDisplayName} ${sc(s.us)} - ${s.them.team.shortDisplayName} ${sc(s.them)}`); }
+  if (next) { const s = side(next), tv = ((next.c.broadcasts || [])[0] || {}).media; lines.push(`Next game: ${day(next.when)} at ${time(next.when)}, ${s.home ? 'vs' : 'at'} ${s.them.team.displayName}${tv && tv.shortName ? ' (on ' + tv.shortName + ')' : ''}`); }
+  const rec = d.team && d.team.recordSummary; if (rec) lines.push(`Record: ${rec}${d.team.standingSummary ? ', ' + d.team.standingSummary : ''}`);
+  if (!lines.length) throw new Error('no games found');
+  return { label: 'Sports', plain: `🏟 ${tm.full}\n` + lines.join('\n'), text: `SPORTS (ESPN, live) for the ${tm.full}:\n` + lines.join('\n'), sources: [{ title: 'ESPN', url: `https://www.espn.com/${tm.lg.split('/')[1]}/team/_/name/${tm.abbr}` }] };
+}
 // ---------------- pictures (free online image maker, Pollinations) ----------------
 function pictureRequest(text) {
   const t = text.trim();
@@ -565,6 +628,9 @@ function decideTools(text) {
   if (/\b(weather|temperature|forecast|rain(ing|y)?|snow(ing|y)?|humid|humidity|how hot|how cold|degrees outside|sunny|cloudy|windy|thunderstorms?|umbrella|jacket)\b/.test(t) && !/\b(song|album|lyrics|movie|film|band|rapper|track)\b/.test(t) || /\b(outside|outdoors?|beach|park|hike|bbq|barbecue|pour concrete|roofing|paint the)\b/.test(t) && /\b(today|tomorrow|tonight|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday|this week)\b/.test(t)) tools.push(['weather', () => toolWeather(text)]);
   if (/\b(bitcoin|btc|ethereum|eth|crypto|solana|dogecoin|doge|xrp|cardano|litecoin|shiba|pepe)\b/.test(t) && /\b(price|worth|cost|how much|value|at|today|now|up|down)\b/.test(t)) tools.push(['crypto', () => toolCrypto(text)]);
   if (currencyPair(text)) tools.push(['currency', () => toolCurrency(text)]);
+  if (stockSymbols(text).length && !/\b(make|build|code|create|design)\b/.test(t)) tools.push(['stocks', () => toolStock(text)]);
+  const team = findTeam(text);
+  if (team && !/\b(news|trade|rumou?rs?|injur(y|ies|ed)|signs?|signed|draft|make|build|code|create|design|draw)\b/.test(t)) return [...tools, ['sports', () => toolSports(text).catch(() => toolNews(text))]]; // exact scores and next game from ESPN
   if (/\b(news|headlines?|what'?s happening|what happened)\b/.test(t)) tools.push(['news', () => toolNews(text)]);
   // asking OMEGA to make/build/write something: answer with its own work, don't search the web (unless asked to search)
   const build = /\b(make|build|write|create|code|program|generate|design|draw|develop)\b/.test(t) && !/\b(search|look up|google|news|latest|price)\b/.test(t);
@@ -748,7 +814,7 @@ function systemPrompt(codeMode, hasLive) {
     f ? `Facts about ${name} (when ${name} asks about "my ...", answer with "your ..."):\n${f}` : '',
     l ? `Feedback ${name} gave you before (follow it):\n${l}` : '',
     (store.get('promptVariant', '') === 'b' ? 'Answer common-knowledge questions directly. If you really do not know something, say so instead of making it up.' : 'If you do not know something, say so instead of making it up.'),
-    codeMode ? 'CODING MODE: write complete, working code in fenced code blocks with a language tag (```html, ```javascript, ```python). For a game, app, website or anything visual: reply with ONE short sentence, then ONE complete self-contained ```html file (all CSS and JavaScript inside it, no outside files or images). It is played on a phone: fill the screen, and make taps/touches work (touchstart) as well as clicks and keys. Keep it simple so it is finished and works. Do not explain the code after it. For plain scripts, JavaScript runs in a worker (use console.log).' : '',
+    codeMode ? 'CODING MODE: write complete, working code in fenced code blocks with a language tag (```html, ```javascript, ```python). For a game, app, website or anything visual: reply with ONE short sentence, then ONE complete self-contained ```html file (all CSS and JavaScript inside it, no outside files or images). It is played on a phone: fill the screen, and make taps/touches work (touchstart) as well as clicks and keys. Keep it simple so it is finished and works. Do not explain the code after it, and do not tell the user to save it to a file or open it in a browser: OMEGA shows a Play button for it. For plain scripts, JavaScript runs in a worker (use console.log).' : '',
   ].filter(Boolean).join('\n\n');
 }
 // questions about yourself ("what business do I run?"): hand the brain the matching saved facts right next to the question
@@ -830,7 +896,7 @@ async function refreshWelcome() {
     if ((RANK[d.rec] || 0) > (RANK[loadedKey] || 0) && settings.skipRec !== d.rec) upgrade = `<div class="setup" style="margin-bottom:14px"><p style="margin:0 0 10px"><b>Your ${esc(kindWord(d.kind))} can run a smarter brain:</b> ${esc(r.name)} (${saved ? `already saved on this ${DEVICE}, switches in seconds` : 'about ' + sizeText(r.sizeMB)}). ${esc(d.why)}</p><button class="btn pri" id="recGo">${saved ? 'Switch' : 'Get'} ${esc(r.name)}</button> <button class="btn" id="recSkip">Not now</button><div class="bar" id="recBarWrap" hidden><div class="fill" id="recBar"></div></div><p class="hint" id="recText" style="margin-top:8px"></p></div>`;
   }
   if (chat) return;
-  col.innerHTML = `${crashNote ? `<div class="err" style="max-width:520px;margin:8px auto">${esc(crashNote)}</div>` : ''}<div class="welcome"><div class="big">Ω</div><h1>${esc(greet())}${first}</h1><p>${engine ? 'What do you want to get done?' : `Your own AI, running on your ${DEVICE}.`}</p>${engine ? `<p class="hint" style="margin:-10px 0 14px">✓ ${esc(modelOf(loadedKey).name)} is saved on this ${DEVICE}, so it opens instantly next time, even offline.</p>` : ''}${engine && IS_IOS && !STANDALONE ? `<div class="setup" style="margin-bottom:14px"><p style="margin:0"><b>Tip:</b> tap Share → <b>Add to Home Screen</b>. Safari can clear saved website data after 7 days without a visit, but not for Home Screen apps. (The Home Screen app downloads the brain once more the first time you open it.)</p></div>` : ''}${setup}${upgrade}${engine ? `<div class="sugg">${SUGG.map((s, i) => `<button data-s="${i}"><b>${esc(s[0])}</b><span>${esc(s[1])}</span></button>`).join('')}</div>` : ''}</div>`;
+  col.innerHTML = `${crashNote ? `<div class="err" style="max-width:520px;margin:8px auto">${esc(crashNote)}</div>` : ''}<div class="welcome"><div class="big">Ω</div><h1>${esc(greet())}${first}</h1><p>${engine || cloudOn() ? 'What do you want to get done?' : `Your own AI, running on your ${DEVICE}.`}</p>${engine ? `<p class="hint" style="margin:-10px 0 14px">✓ ${esc(modelOf(loadedKey).name)} is saved on this ${DEVICE}, so it opens instantly next time, even offline.</p>` : ''}${engine && IS_IOS && !STANDALONE ? `<div class="setup" style="margin-bottom:14px"><p style="margin:0"><b>Tip:</b> tap Share → <b>Add to Home Screen</b>. Safari can clear saved website data after 7 days without a visit, but not for Home Screen apps. (The Home Screen app downloads the brain once more the first time you open it.)</p></div>` : ''}${setup}${upgrade}${engine || cloudOn() ? `<div class="sugg">${SUGG.map((s, i) => `<button data-s="${i}"><b>${esc(s[0])}</b><span>${esc(s[1])}</span></button>`).join('')}</div>` : ''}</div>`;
   col.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { const s = SUGG[+b.dataset.s]; inp.value = s[0] + ' ' + s[1]; grow(); inp.focus(); });
   const cr = $('#crashRetry'), cl = $('#crashLighter');
   if (cr) cr.onclick = () => { crashBlocked = false; store.set('crashes', null); refreshWelcome(); };
@@ -873,10 +939,14 @@ function addUser(text, att) {
   d.querySelector('.edit').onclick = () => editLast(d, text);
   col.appendChild(d);
 }
-// edit your last message: it goes back into the box, and that question + answer are removed
+// edit a message: it goes back into the box, and that question + everything after it are removed
 function editLast(node, text) {
   if (busy || !chat) return;
-  let i = chat.turns.length - 1; while (i >= 0 && chat.turns[i].role !== 'user') i--;
+  // which of your messages was tapped (any message can be edited, not just the last one)
+  const nth = [...col.querySelectorAll('.msg.user')].indexOf(node);
+  let i = -1, seen = -1;
+  for (let k = 0; k < chat.turns.length; k++) if (chat.turns[k].role === 'user' && ++seen === nth) { i = k; break; }
+  if (i < 0) { i = chat.turns.length - 1; while (i >= 0 && chat.turns[i].role !== 'user') i--; }
   if (i < 0) return;
   const att = liveAtt.get(chat.turns[i]) || chat.turns[i].att;
   chat.turns.splice(i); while (node.nextSibling) node.nextSibling.remove(); node.remove();
@@ -936,7 +1006,7 @@ async function addFiles(list) {
     const mb = file.size / 1e6, name = file.name || 'file';
     const kind = /^image\//.test(file.type) ? 'image' : /^video\//.test(file.type) ? 'video' : (file.type === 'application/pdf' || /\.pdf$/i.test(name)) ? 'pdf' : (/^text\//.test(file.type) || TEXT_EXT.test(name)) ? 'text' : null;
     if (!kind) { problems.push(`${name}: that file type isn't supported yet (photos, videos, PDFs and text files work).`); continue; }
-    if (kind === 'video' && attachment.files.some(f => f.kind === 'video')) { problems.push('One video per message.'); continue; }
+    if (kind === 'video' && attachment.files.filter(f => f.kind === 'video').length >= 3) { problems.push('Up to 3 videos per message.'); continue; }
     const max = { image: LIMITS.imageMB, video: LIMITS.videoMB, pdf: LIMITS.pdfMB, text: LIMITS.textMB }[kind];
     if (mb > max) { problems.push(`${name} is ${mb.toFixed(0)} MB. The limit for ${kind === 'text' ? 'text files' : kind + 's'} is ${max} MB.`); continue; }
     const f = { kind, name, loading: true }; attachment.files.push(f); showAttachment();
@@ -1018,7 +1088,163 @@ const cloudFree = () => !settings.cloudKey;
 const polliKey = () => /^(sk_|pk_|plln_)/.test(settings.cloudKey || ''); // a free Pollinations key (enter.pollinations.ai): faster, and the cloud can see photos
 let cloudCoolUntil = 0; // after a "too many requests" from the free brain, let the phone brain answer for a bit
 let cloudAbort = null;
+// ---------------- OMEGA tests the apps and games it makes (like a developer would) ----------------
+// Runs the app in a hidden, locked-down frame, taps its buttons and the screen, and collects any errors.
+function selfTest(code, ms = 2600) {
+  return new Promise(res => {
+    const id = 't' + Math.random().toString(36).slice(2);
+    const probe = `<script>(function(){var id=${JSON.stringify(id)},errs=[];function send(m){try{parent.postMessage(Object.assign({omegaTest:id},m),'*')}catch(e){}}
+window.addEventListener('error',function(e){errs.push(String(e.message||'script error')+(e.lineno?' (line '+e.lineno+')':''))});
+window.addEventListener('unhandledrejection',function(e){errs.push('Promise error: '+String(e.reason&&e.reason.message||e.reason))});
+var ce=console.error;console.error=function(){errs.push('console.error: '+[].map.call(arguments,String).join(' '));try{ce.apply(console,arguments)}catch(e){}};
+window.alert=window.confirm=window.prompt=function(){return ''};
+window.addEventListener('load',function(){setTimeout(function(){try{
+var b=[].slice.call(document.querySelectorAll('button,input[type=button],[onclick]')).slice(0,10).concat([].slice.call(document.querySelectorAll('[class*=cell],[class*=card],[class*=tile],[class*=key],[class*=mole],[class*=square]')).slice(0,6));b.forEach(function(x){try{x.click()}catch(e){errs.push(String(e.message))}});
+var el=document.querySelector('canvas')||document.body,r=el.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2;
+var tch=null;try{tch=new Touch({identifier:1,target:el,clientX:cx,clientY:cy,pageX:cx,pageY:cy})}catch(e){}
+['touchstart','touchend','mousedown','mouseup','click'].forEach(function(t){try{var isT=t.indexOf('touch')===0;if(isT&&!tch)return;var ev=isT?new TouchEvent(t,{bubbles:true,cancelable:true,touches:t==='touchend'?[]:[tch],targetTouches:t==='touchend'?[]:[tch],changedTouches:[tch]}):new MouseEvent(t,{bubbles:true,clientX:cx,clientY:cy});el.dispatchEvent(ev)}catch(e){}});
+['Space','ArrowUp','ArrowLeft','ArrowRight','Enter'].forEach(function(k){try{document.dispatchEvent(new KeyboardEvent('keydown',{key:k===' '?' ':k,code:k,bubbles:true}))}catch(e){}});
+}catch(e){errs.push(String(e.message))}setTimeout(function(){send({done:1,errs:errs.slice(0,5),buttons:document.querySelectorAll('button,input,canvas,[onclick]').length})},900)},1000)});})();<\/script>`;
+    const html = withShim(/<head[^>]*>/i.test(code) ? code.replace(/<head[^>]*>/i, m => m + probe) : probe + code);
+    const f = document.createElement('iframe'); f.setAttribute('sandbox', 'allow-scripts'); f.setAttribute('aria-hidden', 'true'); f.tabIndex = -1;
+    f.style.cssText = 'position:fixed;left:-10000px;top:0;width:390px;height:700px;opacity:0;pointer-events:none;border:0';
+    let fin = false; const done = r => { if (fin) return; fin = true; removeEventListener('message', on); clearTimeout(t); f.remove(); res(r); };
+    const on = e => { const d = e.data; if (d && d.omegaTest === id && e.source === f.contentWindow) done({ errs: d.errs || [], parts: d.buttons || 0 }); };
+    addEventListener('message', on);
+    const t = setTimeout(() => done({ errs: [], parts: -1, timeout: true }), ms + 4000);
+    f.srcdoc = html; document.body.appendChild(f);
+  });
+}
+const lastHtml = t => { const all = [...String(t).matchAll(/```(html|htm)?\s*\n([\s\S]*?)```/gi)].filter(m => m[1] || /^\s*<(!doctype|html)/i.test(m[2])); return all.length ? all[all.length - 1] : null; };
+async function testAndFix(ui, turn) {
+  const m = lastHtml(turn.text); if (!m) return;
+  const badge = (txt, cls) => { const b = document.createElement('div'); b.className = 'hint selftest ' + (cls || ''); b.textContent = txt; ui.ans.after(b); return b; };
+  ui.work.hidden = false; ui.wt.textContent = '🧪 Testing the app…';
+  let r = await selfTest(m[2]);
+  if (!r.errs.length) { badge(r.timeout ? '🧪 Tested: it loads (OMEGA could not finish the tap test).' : '✅ OMEGA tested it: it opens and reacts to taps with no errors.'); ui.wt.textContent = 'Tested the app'; turn.tested = 'ok'; return; }
+  const errText = r.errs.slice(0, 3).join('\n');
+  if (cloudOn() && !stopFlag) {
+    ui.wt.textContent = '🛠 Found a bug while testing. Fixing it…';
+    try {
+      const raw = await cloudChat([{ role: 'system', content: systemPrompt(true, false) }, { role: 'user', content: `This app has a bug. When I ran it and tapped around, I got these errors:\n${errText}\n\nHere is the code:\n\n\`\`\`html\n${m[2]}\n\`\`\`\n\nFix the bug. Give back the WHOLE fixed file in one \`\`\`html block, then one short sentence about what you fixed.` }], { maxTokens: 6000, temperature: 0.2, onText: () => { } });
+      const fx = lastHtml(thinkStrip(raw));
+      if (fx && !stopFlag) {
+        const r2 = await selfTest(fx[2]);
+        if (r2.errs.length < r.errs.length) {
+          turn.text = turn.text.replace(m[0], '```html\n' + fx[2] + '```'); render(ui.ans, turn.text);
+          badge(r2.errs.length ? `🛠 OMEGA fixed some bugs it found. One may be left: ${clip(r2.errs[0], 120)}` : '✅ OMEGA found a bug while testing and fixed it. It now runs with no errors.');
+          ui.wt.textContent = 'Tested and fixed the app'; turn.tested = r2.errs.length ? 'partly' : 'fixed'; return;
+        }
+      }
+    } catch (e) { }
+  }
+  const b = badge(`⚠️ While testing, OMEGA saw an error: ${clip(r.errs[0], 140)} `, 'warn');
+  const fixBtn = document.createElement('button'); fixBtn.className = 'btn'; fixBtn.textContent = '🛠 Fix it'; b.appendChild(fixBtn);
+  fixBtn.onclick = () => { if (busy) return; $('#codeChip').setAttribute('aria-pressed', 'true'); inp.value = `Fix this error in the app: ${clip(r.errs[0], 200)}`; grow(); send(); };
+  ui.wt.textContent = 'Tested the app: found an error'; turn.tested = 'error';
+}
+
+// ---------------- video editor ----------------
+async function editVideo(text, files, ui, turn) {
+  const V = window.OMEGA_VIDEO, vids = files.filter(f => f.kind === 'video'), imgs = files.filter(f => f.kind === 'image');
+  const totalMB = files.reduce((n, f) => n + ((f.blob && f.blob.size) || 0), 0) / 1048576;
+  if (totalMB > 150) { turn.text = `That's ${Math.round(totalMB)} MB of video. Your phone can edit up to about 150 MB at once without crashing. Try a shorter clip.`; render(ui.ans, turn.text); return; }
+  ui.work.hidden = false;
+  // iPhone/iPad: Safari closes tabs that use too much memory, so put the chat brain away while editing (it comes back in seconds)
+  if (IS_IOS && engine && !loading) { ui.wt.textContent = '🎬 Making room for the video editor…'; await dropEngine(); }
+  ui.wt.textContent = '🎬 Planning your edit…';
+  const rules = V.planFromText(text, vids.length, imgs.length);
+  let plan = null;
+  if (cloudOn()) { // the cloud brain understands messy requests best ("cut the boring part at the start and make it tiktok ready")
+    try {
+      const simple = rules.ops.length || rules.merge || rules.slideshow || rules.output !== undefined;
+      const raw = await Promise.race([new Promise((_, no) => setTimeout(() => no(new Error('slow')), simple ? 9000 : 25000)), cloudChat([{ role: 'system', content: V.PLAN_HELP }, { role: 'user', content: `${vids.length ? `Video${vids.length > 1 ? 's' : ''}: ${vids.map((v, i) => `#${i + 1} is ${Math.round(v.duration || 0)} seconds`).join(', ')}.` : `${imgs.length} photos.`}\nRequest: ${text}` }], { maxTokens: 700, temperature: 0.1, onText: () => { } })]);
+      const j = String(thinkStrip(raw)).match(/\{[\s\S]*\}/);
+      if (j) plan = JSON.parse(j[0]);
+    } catch (e) { plan = null; }
+  }
+  if (!plan || !Array.isArray(plan.ops)) plan = rules;
+  else { plan.merge = plan.merge || rules.merge; plan.slideshow = plan.slideshow || rules.slideshow; if (!plan.ops.length && rules.ops.length) plan.ops = rules.ops; if (!plan.output || plan.output === 'mp4') plan.output = rules.output || plan.output; plan.compress = plan.compress || rules.compress; plan.transcript = plan.transcript || rules.transcript;
+    const rc = rules.ops.find(o => o.op === 'captions'), pc = plan.ops.find(o => o && o.op === 'captions'); if (rc && pc) pc.style = rc.style; else if (rc && !pc) plan.ops.push(rc); }
+  plan = V.cleanPlan(plan, { duration: vids[0] && vids[0].duration });
+  if (!plan.ops.length && !plan.transcript && !(plan.merge && vids.length > 1) && !(imgs.length && !vids.length) && plan.output === 'mp4' && !plan.compress) {
+    turn.text = 'I can edit that! Tell me what to do, for example:\n- "cut the first 3 seconds"\n- "make it vertical for TikTok"\n- "add text \"DAY 1\" at the top"\n- "speed it up 2x" or "slow motion"\n- "mute it", "make it black and white", "turn it into a GIF"\n- "add captions" (it writes down what is said, TikTok style)\n- "transcribe it" to get the words\n- attach 2–3 clips and say "merge these"';
+    ui.wt.textContent = '🎬 Video editor'; render(ui.ans, turn.text); return;
+  }
+  const t0 = Date.now();
+  try {
+    const r = await V.run(text, files, plan, msg => { ui.wt.textContent = '🎬 ' + msg; }, p => { ui.wt.textContent = `🎬 Editing… ${Math.round(p * 100)}%`; });
+    if (stopFlag) { turn.text = '(stopped)'; render(ui.ans, turn.text); return; }
+    if (r.transcript !== undefined) { // "transcribe this video": the words, with times
+      const lines = []; let cur = null;
+      for (const w of r.words || []) { if (!cur || w.s - cur.s > 8 || /[.!?]$/.test(cur.t)) { if (cur) lines.push(cur); cur = { s: w.s, t: w.t }; } else cur.t += ' ' + w.t; }
+      if (cur) lines.push(cur);
+      const mmss = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+      turn.text = r.transcript ? `Here's what's said in the video:\n\n${lines.map(l => `**${mmss(l.s)}** ${l.t}`).join('\n')}` : "I couldn't hear any words in that video.";
+      render(ui.ans, turn.text); ui.wt.textContent = `🎬 Transcribed on your phone in ${Math.round((Date.now() - t0) / 1000)}s`; return;
+    }
+    const say = V.describe(plan, vids.length, imgs.length).filter(x => r.captioned || !/captions|subtitles/.test(x));
+    const name = `omega-${new Date().toISOString().slice(0, 10)}.${r.ext}`;
+    const file = new File([r.blob], name, { type: r.type });
+    const url = URL.createObjectURL(r.blob);
+    turn.text = `${say.length ? `Done! I ${say.join(', ').replace(/, ([^,]*)$/, ' and $1')}.` : 'Here it is.'}${r.duration ? ` It's ${Math.round(r.duration * 10) / 10} seconds long.` : ''} Tap **Save** to keep it (it's not saved in the chat).${r.note ? ' ' + r.note : ''}`;
+    render(ui.ans, turn.text);
+    const card = document.createElement('div'); card.className = 'vidcard';
+    card.innerHTML = (r.ext === 'gif' ? `<img src="${url}" alt="your GIF">` : r.ext === 'mp3' ? `<audio controls src="${url}"></audio>` : `<video controls playsinline src="${url}"></video>`) + `<div class="vidbtns"><button class="vsave">💾 Save</button><a class="vdl" href="${url}" download="${name}">Download</a><span class="hint">${(r.blob.size / 1048576).toFixed(1)} MB · ${Math.round((Date.now() - t0) / 1000)}s</span></div>`;
+    card.querySelector('.vsave').onclick = async () => {
+      try { if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
+      card.querySelector('.vdl').click();
+    };
+    ui.ans.after(card);
+    ui.wt.textContent = `🎬 Edited on your phone in ${Math.round((Date.now() - t0) / 1000)}s`;
+  } catch (e) {
+    if (stopFlag) { turn.text = '(stopped)'; render(ui.ans, turn.text); return; }
+    turn.text = `I couldn't finish that edit: ${e.message}. Try a shorter clip, or ask for one change at a time.`;
+    render(ui.ans, turn.text);
+  } finally { if (IS_PHONE) V.release().catch(() => { }); }
+}
+// The free cloud stops each answer after about 800 words-pieces. For long answers (whole apps and games),
+// OMEGA asks it to keep going and stitches the parts together, so the code comes out complete.
 async function cloudChat(messages, o) {
+  let all = '', thoughts = '', parts = 0;
+  const show = o.onText;
+  while (true) {
+    // continue from a whole line (continuing mid-word makes the brain garble code)
+    if (parts) { const cut = all.lastIndexOf('\n'); if (cut > all.length - 400 && cut > 0) all = all.slice(0, cut + 1); }
+    const prefix = all;
+    const oo = { ...o, finish: '', onText: out => { const t = thinkStrip(out), th = thoughtsOf(out); if (!parts && th) thoughts = th; show((thoughts ? '<think>' + thoughts + '</think>' : '') + glue(prefix, t)); } };
+    const tail = all.split('\n').slice(-7).join('\n');
+    const msgs = parts ? [...messages, { role: 'assistant', content: all }, { role: 'user', content: `You were cut off. These are the last lines you wrote:\n${tail}\n\nContinue with the NEXT line after those. Do not repeat them, do not restart the code block, no intro. Finish the file.` }] : messages;
+    let raw;
+    if (!parts) raw = await cloudChatOnce(msgs, oo);
+    else { // a later part failed (busy): wait and try again, and if it still fails keep what we have
+      try { raw = await cloudChatOnce(msgs, oo); } catch (e) { if (stopFlag) break; await sleep(10000); cloudCoolUntil = 0; try { raw = await cloudChatOnce(msgs, oo); } catch (e2) { break; } }
+    }
+    o.got = true; o.finish = oo.finish; o.model = oo.model || o.model;
+    if (stopFlag) return (thoughts ? '<think>' + thoughts + '</think>' : '') + all;
+    const piece = thinkStrip(raw); if (!parts) thoughts = thoughtsOf(raw);
+    all = glue(prefix, piece); parts++;
+    const unfinished = o.finish === 'length' && ((all.match(/```/g) || []).length % 2 === 1 || !/[.!?)\]}>`"'*]\s*$/.test(all));
+    if (!unfinished || parts >= 6) break;
+    if (o.ui) o.ui.wt.textContent = `☁️ Writing a long answer… part ${parts + 1}`;
+    for (let k = 0; k < 3 && Date.now() < cloudCoolUntil; k++) await sleep(8000);
+    cloudCoolUntil = 0;
+  }
+  return (thoughts ? '<think>' + thoughts + '</think>' : '') + all;
+}
+// join a continued answer to what came before: drop a restarted code fence and any repeated words
+function glue(a, b) {
+  if (!a) return b;
+  if ((a.match(/```/g) || []).length % 2 === 1) b = b.replace(/^\s*```[\w-]*\s*\n/, '');
+  // drop lines the brain repeated from the end of the last part
+  const lastLines = a.split('\n').slice(-8).map(s => s.trim()).filter(Boolean);
+  const bl = b.split('\n');
+  while (bl.length && bl[0].trim() && lastLines.includes(bl[0].trim())) bl.shift();
+  b = bl.join('\n');
+  if (a.endsWith('\n')) b = b.replace(/^\n+/, '');
+  return a + b;
+}
+async function cloudChatOnce(messages, o) {
   cloudAbort = new AbortController(); const sig = cloudAbort.signal;
   const t = setTimeout(() => cloudAbort.abort(), 120000);
   try {
@@ -1032,15 +1258,15 @@ async function cloudChat(messages, o) {
       : await fetch('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.cloudKey, 'X-Title': 'OMEGA' },
       body: JSON.stringify({ model: settings.cloudModel || 'openrouter/free', messages, stream: true, max_tokens: o.maxTokens, temperature: o.temperature }) });
     clearTimeout(busyNote);
-    if (free && r.status === 429) cloudCoolUntil = Date.now() + 60000;
-    if (!r.ok) { let m = 'HTTP ' + r.status; try { const j = await r.json(); m = (j.error && j.error.message) || m; } catch (_) { } if (r.status === 401 || r.status === 403) m = 'the cloud key is not valid'; if (r.status === 429) m = 'free limit reached for now'; throw new Error(m); }
+    if (free && (r.status === 429 || r.status === 402)) cloudCoolUntil = Date.now() + 45000; // the free cloud's per-minute limit: let the phone brain answer for a bit
+    if (!r.ok) { let m = 'HTTP ' + r.status; try { const j = await r.json(); m = (j.error && j.error.message) || m; } catch (_) { } if (r.status === 401 || r.status === 403) m = 'the cloud key is not valid'; if (r.status === 402 && free) m = 'the free cloud is busy right now'; if (r.status === 429) m = 'free limit reached for now'; throw new Error(m); }
     const rd = r.body.getReader(), dec = new TextDecoder(); let buf = '', text = '', reason = '', model = '';
     while (true) {
       const { done, value } = await rd.read(); if (done) break;
       buf += dec.decode(value, { stream: true }); const lines = buf.split('\n'); buf = lines.pop();
       for (const ln of lines) {
         const l = ln.trim(); if (!l.startsWith('data:')) continue; const d = l.slice(5).trim(); if (d === '[DONE]') continue;
-        try { const j = JSON.parse(d); if (j.error) throw new Error(j.error.message || 'cloud error'); model = j.model || model; const dl = (j.choices && j.choices[0] && j.choices[0].delta) || {}; reason += dl.reasoning || dl.reasoning_content || ''; text += dl.content || ''; } catch (e) { if (/cloud error|error/i.test(e.message) && !/JSON/.test(e.message)) throw e; }
+        try { const j = JSON.parse(d); if (j.error) throw new Error(j.error.message || 'cloud error'); model = j.model || model; const ch0 = j.choices && j.choices[0]; if (ch0 && ch0.finish_reason) o.finish = ch0.finish_reason; const dl = (ch0 && ch0.delta) || {}; reason += dl.reasoning || dl.reasoning_content || ''; text += dl.content || ''; } catch (e) { if (/cloud error|error/i.test(e.message) && !/JSON/.test(e.message)) throw e; }
         o.got = true; o.onText(reason ? '<think>' + reason + (text ? '</think>' : '') + text : text);
         if (stopFlag) { cloudAbort.abort(); break; }
       }
@@ -1069,8 +1295,10 @@ async function answerInCloud(text, live, att, ui, turn, media = []) {
     parts.push({ type: 'text', text: (media.some(f => f.kind === 'video') ? 'These are frames from my video, in order. ' : '') + content });
     user = parts;
   }
-  const hist = historyFor(12000); if (hist.length) hist.pop();
-  const messages = [{ role: 'system', content: systemPrompt(codeMode, !!live) }, ...hist, { role: 'user', content: user }];
+  const hist = historyFor(20000, true); if (hist.length) hist.pop(); // the cloud sees the newest code whole, so "make the buttons bigger" works
+  // the free cloud cuts each answer at about 2,800 characters: ask for compact code so most apps fit in one go
+  const compact = codeMode && cloudFree() && !polliKey() ? '\n\nKeep the html file compact so it fits in one reply: short CSS, short variable names, no comments, under about 2,500 characters if you can.' : '';
+  const messages = [{ role: 'system', content: systemPrompt(codeMode, !!live) + compact }, ...hist, { role: 'user', content: user }];
   const t0 = Date.now(), o = { ui, maxTokens: codeMode ? 6000 : 2000, temperature: codeMode ? 0.3 : 0.6, onText: out => { showThoughts(ui, out, t0); render(ui.ans, thinkStrip(out), true); toBottom(); } };
   render(ui.ans, '', true); if (window.OMEGA) window.OMEGA.lastPrompt = messages;
   let raw;
@@ -1130,7 +1358,7 @@ function staticTurns() {
   }
 }
 
-function grow() { inp.style.height = 'auto'; inp.style.height = Math.min(inp.scrollHeight, 200) + 'px'; sendBtn.disabled = !busy && !inp.value.trim(); }
+function grow() { inp.style.height = 'auto'; inp.style.height = Math.min(inp.scrollHeight, 200) + 'px'; const hasFiles = attachment && attachment.files.length && !attachment.files.some(f => f.loading); sendBtn.disabled = !busy && !inp.value.trim() && !hasFiles; } // a photo or video alone can be sent too
 inp.addEventListener('input', grow);
 const coarse = window.matchMedia && matchMedia('(pointer:coarse)').matches;
 inp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !coarse && !e.isComposing) { e.preventDefault(); send(); } });
@@ -1156,6 +1384,11 @@ async function send(opts = {}) {
   try {
     const media = att ? att.files.filter(f => (f.kind === 'image' && f.data) || (f.kind === 'video' && f.blob)) : [];
     if (att && att.files.some(f => (f.kind === 'image' || f.kind === 'video')) && !media.length) { turn.text = 'That photo/video is no longer in memory (saved chats keep only a preview). Attach it again with 📎 and ask.'; render(ui.ans, turn.text); return; }
+    // video editing: trim, cut, vertical, text, speed, GIF, merge clips, photo slideshows (all on the phone, free)
+    if (att && window.OMEGA_VIDEO && OMEGA_VIDEO.wantsEdit(text, att.files)) {
+      const edFiles = att.files.filter(f => (f.kind === 'video' && f.blob) || (f.kind === 'image' && f.data));
+      if (edFiles.length) { await editVideo(text, edFiles, ui, turn); return; }
+    }
     if (media.length) {
       if (cloudOn() && (!cloudFree() || polliKey())) { try { await answerInCloud(text, '', att, ui, turn, media); return; } catch (e) { if (stopFlag) return; ui.work.hidden = false; ui.wt.textContent = `Cloud brain unavailable, using OMEGA's own eyes`; } }
       await answerWithEyes(text, att, media, ui, turn); return;
@@ -1172,11 +1405,17 @@ async function send(opts = {}) {
     if (!rem && settings.autoMemory !== false && !/\?\s*$/.test(text)) {
       const found = [];
       for (const part of text.split(/(?<=[.!])\s+|\s+(?:and|but)\s+(?=i\b|my\b)/i)) {
-        const m = part.match(/^(?:yo|hey|so|btw|also|ok|okay|well)?[,\s]*((?:i (?:run|own|work (?:at|as|for)|am a|'m a|am an|'m an|have (?:a|an|two|three|\d+)|drive|study|go to|play|like|love|hate|prefer|can't eat|don't eat|am allergic)|my (?:\w+ ){0,2}(?:is|are|was born))\b.{2,90})$/i);
-        if (m && m[1].split(/\s+/).length >= 4 && !/\b(it|that|this|them|those|one)$/i.test(m[1].replace(/[.!]+$/, '')) && !/\b(name is|you|your|today|right now|tired|hungry|bored|gonna|going to|about to)\b/i.test(m[1])) found.push(m[1].replace(/[.!]+$/, '').trim());
+        const m = part.match(/^(?:yo|hey|so|btw|also|ok|okay|well|no|nah|nope|actually)?[,\s]*((?:i (?:run|own|work (?:at|as|for)|am a|'m a|am an|'m an|have (?:a|an|two|three|\d+)|drive|study|go to|play|like|love|hate|prefer|can't eat|don't eat|am allergic)|my (?:\w+ ){0,2}(?:is|are|was born))\b.{2,90})$/i);
+        if (m && (m[1] = m[1].replace(/[,;]\s*(remember (that|this|it)|don'?t forget|ok|okay).*$/i, '')) && m[1].split(/\s+/).length >= 4 && !/\b(it|that|this|them|those|one)$/i.test(m[1].replace(/[.!]+$/, '')) && !/\b(name is|you|your|today|right now|tired|hungry|bored|gonna|going to|about to)\b/i.test(m[1])) found.push(m[1].replace(/[.!]+$/, '').trim());
       }
       const fresh = found.filter(f => !facts.some(x => x.toLowerCase() === f.toLowerCase()));
       if (fresh.length) { facts.push(...fresh); facts = facts.slice(-100); store.set('facts', facts); renderFacts(); turn.memo = fresh; }
+    }
+    // learning from corrections: "no, it's ..." / "that's wrong, ..." right after an answer becomes a lesson OMEGA follows next time
+    if (!rem && !att && /^(no+|nah|nope|wrong|that'?s (wrong|not right|incorrect|not true)|incorrect|actually|not quite)\b[,.! ]+\S/i.test(text) && text.split(/\s+/).length >= 4) {
+      const prevA = [...chat.turns].slice(0, -1).reverse().find(t => t.role !== 'user');
+      const prevQ = chat.turns.slice(0, -1).filter(t => t.role === 'user').pop();
+      if (prevA && prevQ && !/```/.test(prevA.text || '')) { lessons.push({ q: clip(prevQ.text, 300), a: clip(prevA.text, 400), fix: clip(text, 400), t: Date.now(), auto: true }); lessons = lessons.slice(-100); store.set('lessons', lessons); renderFacts(); turn.memo = (turn.memo || []).concat(['learned from your correction']); }
     }
     if (rem) { turn.text = `Got it, I'll remember that: ${rem[1].replace(/[.!]+$/, '')}`; render(ui.ans, turn.text); return; } // saved; no brain needed
     if (/\b(make|build|create|code|write|give|gimme|want|play|game)\b/i.test(text)) {
@@ -1198,6 +1437,11 @@ async function send(opts = {}) {
       }
     }
     if (/^(what'?s|whats|what is|what was|what'?s|do you know|do you remember|remember|you remember|tell me)\s+my name\b|^who am i\b|\bwhat(?:'?s| is| was) my name\b/i.test(text) && profile.name) { turn.text = `Your name is ${profile.name}.`; render(ui.ans, turn.text); return; }
+    // "what can you do?": a real list of OMEGA's abilities (the brain itself doesn't know them)
+    if (!att && /^(?:yo |hey |so |ok |omega,? )*(?:what can (?:you|omega) do|what (?:are|r) (?:your|omega'?s) (?:features|abilities|skills)|what do you do|how do i use (?:you|omega|this)|help|what can i (?:ask|do with) (?:you|omega|this))\??$/i.test(text.trim())) {
+      turn.text = `Here's what I can do for you:\n\n- **Chat and advice**: ask me anything. Online I use a big free cloud brain; offline, the brain on your phone.\n- **Live info**: weather, news, sports scores (\"did the Lakers win?\"), stock prices, crypto, currency, the time anywhere, web search.\n- **Deep research**: start with \"research…\" and I search several times, read the pages and write a report with sources.\n- **Build apps and games**: tap **Code**, then say what to make. I test it myself and fix bugs I find. Or say \"play snake\" for a ready game.\n- **Edit videos**: attach a video and say \"cut the first 3 seconds\", \"make it vertical\", \"add captions\", \"speed it up\", \"merge these\", \"make a GIF\", or \"transcribe it\".\n- **Photos**: attach one and ask about it, or turn photos into a slideshow video.\n- **Pictures**: \"draw a lowrider at sunset\".\n- **Files**: attach a PDF or text file and ask about it.\n- **Memory**: I remember what you tell me about yourself. Tap 👎 to teach me.\n- **Voice**: tap the 🎤 and talk; I read answers out loud.`;
+      render(ui.ans, turn.text); return;
+    }
     const pic = att ? null : pictureRequest(text);
     if (pic) { await makePicture(pic, ui, turn); return; }
     const math = att ? null : quickMath(text);
@@ -1231,7 +1475,16 @@ async function send(opts = {}) {
     // optional cloud brain (free OpenRouter models): much smarter when online; the phone brain takes over if it fails
     if (cloudOn()) {
       try { await answerInCloud(text, live, att, ui, turn); return; }
-      catch (e) { if (stopFlag) { turn.text = turn.text || '(stopped)'; render(ui.ans, turn.text); return; } ui.work.hidden = false; ui.wt.textContent = `Cloud brain unavailable (${clip(e.message, 60)}), using the phone brain`; }
+      catch (e) {
+        if (stopFlag) { turn.text = turn.text || '(stopped)'; render(ui.ans, turn.text); return; }
+        // no phone brain downloaded yet: wait a moment and ask the free cloud again instead of giving up
+        if (!engine && !loading && !(await isCached(modelOf(settings.model)).catch(() => false))) {
+          ui.work.hidden = false; ui.wt.textContent = '☁️ The free cloud brain is busy. Trying again in a few seconds…';
+          await sleep(12000); cloudCoolUntil = 0;
+          if (!stopFlag) { try { await answerInCloud(text, live, att, ui, turn); return; } catch (e2) { if (stopFlag) { turn.text = '(stopped)'; render(ui.ans, turn.text); return; } } }
+        }
+        ui.work.hidden = false; ui.wt.textContent = `Cloud brain unavailable (${clip(e.message, 60)}), using the phone brain`;
+      }
     }
     if (engine && modelOf(loadedKey).vision && !loading) { ui.work.hidden = false; ui.wt.textContent = 'Switching back to the chat brain…'; await dropEngine(); }
     if (!engine) {
@@ -1239,7 +1492,7 @@ async function send(opts = {}) {
         if (loading) { ui.work.hidden = false; ui.wt.textContent = 'Waking up OMEGA…'; await loading; }
         else if (crashBlocked) throw Object.assign(new Error("OMEGA's brain crashed twice from low memory. Go to the home screen (✎ New chat) and tap Try again."), { setup: true });
         else if ((await pickSavedBrain(), !crashBlocked && await isCached(modelOf(settings.model)))) { ui.work.hidden = false; ui.wt.textContent = 'Waking up OMEGA…'; await loadBrain(settings.model, p => { ui.wt.textContent = `Waking up OMEGA… ${Math.round((p.progress || 0) * 100)}%`; }); }
-        else throw Object.assign(new Error('OMEGA needs its brain first. Tap "Download OMEGA\'s brain" on the home screen.'), { setup: true });
+        else throw Object.assign(new Error(cloudOn() && navigator.onLine !== false ? "The free cloud brain is busy right now, and the phone brain isn't downloaded yet. Try again in a minute, or download the phone brain so OMEGA always works, even offline." : 'OMEGA needs its brain first. Tap "Download OMEGA\'s brain" on the home screen.'), { setup: true });
       } catch (e) {
         if (liveShown) { turn.text = fallback(e.setup ? "My brain isn't downloaded yet, so I can't chat, but I can still look things up." : "My brain couldn't start just now."); render(ui.ans, turn.text); return; }
         throw e;
@@ -1252,7 +1505,7 @@ async function send(opts = {}) {
     const userContent = (live ? 'LIVE INFO (fetched just now):\n' + clip(live, IS_PHONE && ctxNow() < 8192 ? 2400 : 5000) + '\n\n(Answer using the LIVE INFO above. It is real and current. Copy numbers, times and names exactly as written, and name the source. If it lists headlines or results, summarize the most relevant ones, and prefer the newest dated item. If the LIVE INFO does not contain the exact answer (for example a time, score or date), say you could not find that exact detail and share what you did find. Never guess numbers, times or scores.)\n---\n' : '') + (att && attText(att) ? `Here is the file the user attached (${att.files.map(f => f.name).join(', ')}):\n-----\n${clip(attText(att), Math.max(1200, (ctxNow() - 900) * 3))}\n-----\n\nUsing the file above, answer this: ` : '') + memoryHint(text) + text + (wantsApp ? '\n\n(Make it as ONE complete, working ```html file with the CSS and JavaScript inside. No input() prompts. It must work on a phone screen.)' : '');
     const win = ctxNow(), big = win >= 8192;
     // keep the last code whole only when this is a change to it ("make it bigger"), not when asking for something new
-    const editsCode = codeMode && !/\b(a|an|another|new)\b[\w\s]{0,30}\b(app|game|calculator|website|site|page|tool|timer|script|program)\b/i.test(text) && /\b(it|its|it's|that|this|the|bigger|smaller|change|fix|add|remove|update|improve|instead|faster|slower|color|colour)\b/i.test(text);
+    const editsCode = codeMode && !/^(?:please |can you |could you |now )?(write|create|build|code|generate|program)\b/i.test(text) && !/\b(a|an|another|new)\b[\w\s]{0,30}\b(app|game|calculator|website|site|page|tool|timer|script|program|function)\b/i.test(text) && /\b(it|its|it's|this one|the (button|buttons|color|colors|background|text|title|font|game|app|page|player|score|speed|size|code)|bigger|smaller|change|fix|add|remove|update|improve|instead|faster|slower|colou?r|rename)\b/i.test(text);
     const hist = historyFor(big ? (IS_PHONE ? 9000 : 16000) : IS_PHONE ? (live ? 1200 : codeMode ? 3000 : 2600) : (live ? 3500 : 6000), editsCode);
     if (hist.length) hist.pop(); // drop the current user turn (already added) — we send the enriched version
     // changing earlier code: give the small brain ONLY that code + the change, so it can't mix up which app it is
@@ -1274,9 +1527,9 @@ async function send(opts = {}) {
     render(ui.ans, '', true); toBottom(); // shows "Thinking…" until the first words arrive
     // watchdog: if the brain goes silent (no new words for a long time), stop it so OMEGA can restart it instead of hanging
     let lastTick = Date.now(), gotWords = false, stalled = false, reloading = false;
-    const tick0 = opts.onText; opts.onText = out => { lastTick = Date.now(); gotWords = true; tick0(out); };
+    let dead = false; const tick0 = opts.onText; opts.onText = out => { if (dead) return; lastTick = Date.now(); gotWords = true; tick0(out); }; // dead: you pressed Stop, ignore late words
     const dog = setInterval(() => { const quiet = Date.now() - lastTick; if (!stopFlag && !reloading && quiet > (window.__omegaDogMs || (gotWords ? 45000 : 150000))) { stalled = true; try { engine && engine.stop(); } catch (e) { } } }, 3000);
-    const run = async msgs => { lastTick = Date.now(); gotWords = false; stalled = false; if (enginePending) { ui.wt.textContent = 'Finishing the last answer…'; await enginePending.catch(() => { }); } const p = engine.chat(msgs, opts); enginePending = p; p.catch(() => { }).finally(() => { if (enginePending === p) enginePending = null; }); const raw = await Promise.race([p, new Promise(r => stopWaiters.push(() => r('')))]); if (stalled) throw new Error('brain stalled'); const th = thoughtsOf(raw); if (th) turn.think = clip(th, 6000); showThoughts(ui, raw, t0, true); return thinkStrip(raw).trim(); };
+    const run = async msgs => { lastTick = Date.now(); gotWords = false; stalled = false; if (enginePending) { ui.wt.textContent = 'Finishing the last answer…'; await enginePending.catch(() => { }); } const p = engine.chat(msgs, opts); enginePending = p; p.catch(() => { }).finally(() => { if (enginePending === p) enginePending = null; }); const raw = await Promise.race([p, new Promise(r => stopWaiters.push(() => { dead = true; r(''); }))]); if (stalled) throw new Error('brain stalled'); const th = thoughtsOf(raw); if (th) turn.think = clip(th, 6000); showThoughts(ui, raw, t0, true); return thinkStrip(raw).trim(); };
     setInflight({ model: loadedKey, t: Date.now(), what: 'answer' });
     try { turn.text = await run(messages); }
     catch (e) {
@@ -1325,9 +1578,11 @@ async function send(opts = {}) {
     }
     turn.text = '';
   } finally {
+    if (turn.text && !stopFlag && lastHtml(turn.text) && settings.selfTest !== false && !window.__omegaNoSelfTest) { try { await testAndFix(ui, turn); } catch (e) { } }
     if (turn.text && turn.memo) { const mm = document.createElement('div'); mm.className = 'hint memo'; mm.textContent = '🧠 Memory updated: ' + turn.memo.join(' · '); ui.ans.after(mm); }
     if (turn.text) { chat.turns.push(turn); showSources(ui, turn.sources); showActs(ui, turn, text); if (spoken && !stopFlag && settings.voiceReply !== false) { const rb = ui.acts.querySelector('[data-a=read]'); if (rb) speak(turn.text, rb); } }
     else chat.turns.pop();
+    ui.work.classList.add('done'); // finished: stop the little spinner next to the status line
     saveChats(); setBusy(false); toBottom();
   }
 }
@@ -1406,7 +1661,7 @@ $('#loadBtn').onclick = () => {
 $('#testSrc').onclick = async () => {
   const ul = $('#srcResults'); ul.innerHTML = ''; $('#testSrc').disabled = true;
   const row = (n, ok, d) => { const li = document.createElement('li'); li.innerHTML = `<span><b>${esc(n)}</b><br><span class="hint">${esc(clip(d, 120))}</span></span><span class="${ok ? 'ok' : 'bad'}">${ok ? 'Works' : 'Failed'}</span>`; ul.appendChild(li); };
-  const tests = [['Weather', () => toolWeather('weather')], ['News', () => toolNews('news')], ['Web search', () => toolWeb('Los Angeles population')], ['Crypto', () => toolCrypto('bitcoin price')], ['Currency', () => toolCurrency('1 usd to mxn')], ['Read a web page', () => toolRead('https://example.com')]];
+  const tests = [['Weather', () => toolWeather('weather')], ['News', () => toolNews('news')], ['Web search', () => toolWeb('Los Angeles population')], ['Crypto', () => toolCrypto('bitcoin price')], ['Currency', () => toolCurrency('1 usd to mxn')], ['Sports scores', () => toolSports('lakers game')], ['Stock prices', () => toolStock('apple stock')], ['Read a web page', () => toolRead('https://example.com')]];
   for (const [n, f] of tests) { try { const r = await f(); row(n, true, r.text.split('\n').slice(0, 2).join(' ')); } catch (e) { row(n, false, e.message); } }
   $('#testSrc').disabled = false;
 };
@@ -1429,6 +1684,8 @@ function renderFacts() {
 $('#facts').onclick = e => { const i = e.target.dataset.f; if (i == null) return; facts.splice(+i, 1); store.set('facts', facts); renderFacts(); };
 $('#lessons').onclick = e => { const i = e.target.dataset.l; if (i == null) return; lessons.splice(+i, 1); store.set('lessons', lessons); renderFacts(); };
 $('#addFact').onclick = () => { const v = $('#newFact').value.trim(); if (!v) return; facts.push(v); store.set('facts', facts); $('#newFact').value = ''; renderFacts(); };
+$('#autoMem').checked = settings.autoMemory !== false;
+$('#autoMem').onchange = e => { settings.autoMemory = e.target.checked; store.set('settings', settings); };
 $('#newFact').addEventListener('keydown', e => { if (e.key === 'Enter') $('#addFact').click(); });
 
 // feedback
@@ -1505,4 +1762,4 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
 }
 // keep the downloaded brain from being cleared by the browser when storage is low
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => { });
-window.OMEGA = { threads: () => ({ isolated: !!window.crossOriginIsolated, cores: navigator.hardwareConcurrency || 1, brainThreads: brainThreads() }), quickMath, decideTools, currencyPair, placeFrom, isClockQuestion, toolWeather, toolTime, toolNews, toolCrypto, toolCurrency, version: VERSION };
+window.OMEGA = { selfTest, findTeam, toolSports, toolStock, stockSymbols, threads: () => ({ isolated: !!window.crossOriginIsolated, cores: navigator.hardwareConcurrency || 1, brainThreads: brainThreads() }), quickMath, decideTools, currencyPair, placeFrom, isClockQuestion, toolWeather, toolTime, toolNews, toolCrypto, toolCurrency, version: VERSION };

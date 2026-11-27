@@ -7,6 +7,7 @@ iframe{position:fixed;inset:0;width:100%;height:100%;border:0;background:#fff}
 .msg{display:grid;place-items:center;height:100%;text-align:center;padding:20px}a{color:#e08a6a}</style></head>
 <body><div class="msg" id="m">Loading…</div>
 <script>
+const SHIM = "<script>(function(){function mem(){var d={};return{getItem:function(k){return Object.prototype.hasOwnProperty.call(d,k)?d[k]:null},setItem:function(k,v){d[k]=String(v)},removeItem:function(k){delete d[k]},clear:function(){d={}},key:function(i){return Object.keys(d)[i]||null},get length(){return Object.keys(d).length}}}['localStorage','sessionStorage'].forEach(function(n){try{window[n].getItem('x')}catch(e){try{Object.defineProperty(window,n,{value:mem(),configurable:true})}catch(_){}}})})();<\/script>";
 // The app's code is packed inside this link (after the #). It runs in a locked box (sandbox) so it can't touch anything else.
 (async () => {
   const m = document.getElementById('m');
@@ -17,7 +18,7 @@ iframe{position:fixed;inset:0;width:100%;height:100%;border:0;background:#fff}
     const code = h[0] === 'z' ? await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text() : new TextDecoder().decode(bytes);
     const t = code.match(/<title>([^<]{1,60})<\/title>/i); if (t) document.title = t[1];
     const f = document.createElement('iframe'); f.setAttribute('sandbox', 'allow-scripts allow-forms allow-modals allow-pointer-lock'); f.setAttribute('allow', 'autoplay; fullscreen');
-    f.srcdoc = code; m.remove(); document.body.appendChild(f); f.focus();
+    f.srcdoc = /<head[^>]*>/i.test(code) ? code.replace(/<head[^>]*>/i, m => m + SHIM) : SHIM + code; m.remove(); document.body.appendChild(f); f.focus();
   } catch (e) { m.innerHTML = 'Could not open this app: ' + (e.message || e) + '<br><br><a href="./">Open OMEGA</a>'; }
 })();
 </script></body></html>
