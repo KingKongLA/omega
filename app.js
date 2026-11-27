@@ -7,7 +7,7 @@ const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.89';
 const WLLAMA_URL = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/index.js';
 const WLLAMA_WASM = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/wasm/wllama.wasm';
 const PROXY = 'https://proxy.cors.dev/';
-const VERSION = '3.7.0';
+const VERSION = '3.7.1';
 
 const MODELS = [
   { key: 'cpu-qwen3-0.6b', engine: 'cpu', name: 'Qwen3 0.6B', repo: 'unsloth/Qwen3-0.6B-GGUF', file: 'Qwen3-0.6B-Q4_K_M.gguf', sizeMB: 400, memMB: 650, thinking: true, desc: 'Recommended for phones and tablets. Runs on the processor, so it does not crash.' },
@@ -619,6 +619,39 @@ function quickMath(text) {
   try { const v = Function('"use strict";return (' + e + ')')(); if (typeof v !== 'number' || !isFinite(v)) return null; return `${e.replace(/\*\*/g, '^').replace(/\*/g, ' × ').replace(/\//g, ' ÷ ').replace(/\+/g, ' + ').replace(/(\d)-/g, '$1 - ')} = ${fmtNum(v)}`; } catch (_) { return null; }
 }
 const fmtNum = v => Math.abs(v) >= 1e15 ? v.toExponential(4) : (+v.toFixed(6)).toLocaleString('en-US', { maximumFractionDigits: 6 });
+// ---- follow-ups: "show me the current info" means current info about what we were just talking about ----
+function prevUserText() {
+  if (!chat || !chat.turns) return '';
+  const us = chat.turns.filter(t => t.role === 'user'); // the newest is the message being answered
+  return us.length >= 2 ? String(us[us.length - 2].text || '') : '';
+}
+function isFollowUp(text) {
+  const prev = prevUserText(); if (!prev) return false;
+  const t = text.toLowerCase(), words = t.split(/\s+/).filter(Boolean).length;
+  if (words > 22) return false;
+  const cue = /\b(it|its|it's|that|this|those|these|he|him|his|she|her|hers|they|them|their|there|current(ly)?|up.?to.?date|updated?|latest|newest|recent|now|today|more|again|instead|same|also|what about|how about|and the|not the|before|older?|then|thing|one|account|profile|page)\b/.test(t);
+  const names = (text.match(/\b[A-Z][a-z]{2,}|\b[a-z]+\d+[a-z0-9_]*\b|@\w+/g) || []).filter(w => !/^(I|Show|Tell|Give|What|How|Why|When|Where|Who|Can|Could|Please|Now|Not|The|And|But|Bro|Yo|Hey)$/.test(w));
+  const wantsLive = /\b(current(ly)?|up.?to.?date|updated?|latest|newest|recent|right now|today|this (week|month|year)|news)\b/.test(t);
+  return cue && names.length === 0 && (!!chat.lastTopic || wantsLive); // only when the last answer used live info, or this one asks for it
+}
+async function standaloneQuery(text, ui) {
+  const prev = prevUserText(), lastA = chat.turns.filter(t => t.role === 'assistant').slice(-1)[0];
+  let q = '';
+  if (cloudOn()) {
+    try {
+      const sys = 'You turn a chat follow-up into ONE standalone web search query. Use the earlier messages to fill in what "it/he/that/this/current/the account" refers to. Keep names, usernames and handles exactly. Max 12 words. Reply with only the query, no quotes.';
+      const user = `Earlier user message: ${clip(prev, 400)}\n${chat.lastTopic ? 'Last thing searched: ' + chat.lastTopic + '\n' : ''}Assistant's last answer (start): ${clip(lastA ? String(lastA.text || '') : '', 300)}\nNew follow-up: ${clip(text, 300)}\n\nSearch query:`;
+      const o = { maxTokens: 60, temperature: 0, bg: true, onText: () => { } };
+      const out = await Promise.race([cloudChat([{ role: 'system', content: sys }, { role: 'user', content: user }], o), sleep(9000).then(() => '')]);
+      q = thinkStrip(out || '').split('\n').map(s => s.trim()).filter(Boolean)[0] || '';
+      q = q.replace(/^(search query|query)\s*:\s*/i, '').replace(/^["'“]|["'”]$/g, '').trim();
+    } catch (_) { }
+  }
+  if (!q || q.length < 3 || q.length > 160) q = ((chat.lastTopic || cleanQuery(prev)) + ' ' + text.replace(/\b(show me|tell me|give me|the|not|before|dates?|please|bro|info(rmation)?)\b/gi, ' ')).replace(/\s+/g, ' ').trim(); // simple backup: earlier topic + new words
+  if (ui) step(ui, `🔁 Understood as: "${clip(q, 70)}"`);
+  return q;
+}
+const SOCIAL = /\b(instagram|insta|ig|tiktok|tik tok|twitter|x\.com|threads|facebook|fb|snapchat|snap|youtube channel|twitch)\b/i;
 function decideTools(text) {
   const t = text.toLowerCase(), tools = [];
   const url = ((text.match(/https?:\/\/[^\s)<>"']+/) || [])[0] || '').replace(/[.,!?;:]+$/, '');
@@ -1720,16 +1753,21 @@ async function send(opts = {}) {
     let live = '', liveShown = '';
     if (settings.live && !rem) {
       const aboutPast = /\b(you (said|told|gave|suggested|recommended|made|wrote|showed)( me)?|did you (say|tell|give|suggest|recommend|make|write|show)|we (talked|discussed|said|decided|planned|were talking)|(in|from) (the|our|another|other|that|my) (old |last )?(chat|convo|conversation)|last time (we|you|i))\b/i.test(text) && chats.length > 1; // about our old chats, not the internet
-      const tools = navigator.onLine === false || att || aboutPast ? [] : decideTools(text); // no internet (or a file to read): skip live info
+      let qtext = text;
+      if (navigator.onLine !== false && !att && !aboutPast && isFollowUp(text)) { ui.work.hidden = false; ui.wt.textContent = 'Working out what you mean…'; qtext = await standaloneQuery(text, ui); }
+      const tools = navigator.onLine === false || att || aboutPast ? [] : decideTools(qtext); // no internet (or a file to read): skip live info
+      if (chat) chat.lastTopic = tools.length ? clip(cleanQuery(qtext), 120) : '';
       if (tools.length) {
         ui.work.hidden = false; ui.wt.textContent = 'Checking live info: ' + tools.map(t => t[0]).join(', ') + '…';
-        const q40 = clip(cleanQuery(text) || text, 48);
+        const q40 = clip(cleanQuery(qtext) || qtext, 48);
         const STEP = { weather: '🌤 Checking the weather', news: `📰 Reading the latest news about "${q40}"`, web: `🔎 Searching the web for "${q40}"`, wiki: `📚 Looking up "${q40}"`, sports: '🏟 Checking live scores on ESPN', stocks: '📈 Checking live stock prices', crypto: '🪙 Checking crypto prices', currency: '💱 Checking exchange rates', time: '🕒 Checking the time', read: '📖 Reading the page you sent', research: `🔬 Researching "${q40}": 3 searches, then reading the top pages` };
         tools.forEach(t => step(ui, STEP[t[0]] || `🔎 Looking up ${t[0]}`));
         const res = await Promise.allSettled(tools.map(t => t[1]()));
         const ok = res.filter(r => r.status === 'fulfilled').map(r => r.value);
         ok.forEach(r => turn.sources.push(...r.sources));
         live = ok.map(r => r.text).join('\n\n');
+        if (qtext !== text) live = `(The user's follow-up "${clip(text, 160)}" was searched as: "${qtext}". Answer about that topic.)\n\n` + live;
+        if (SOCIAL.test(qtext + ' ' + prevUserText())) live += '\n\n(IMPORTANT: Instagram, TikTok, X and similar apps block outside tools from reading live profiles. The results above are search-engine copies and can be weeks or months old: follower counts, bios and posts may be out of date. Say that plainly, give what was found with that warning, and tell the user to open the profile in the app for the current numbers. Never invent current numbers.)';
         liveShown = ok.map(r => r.plain || r.text).join('\n\n');
         const cards = ok.filter(r => r.plain).map(r => r.plain);
         if (cards.length) { turn.live = cards.join('\n\n'); ui.live.textContent = turn.live; ui.live.hidden = false; }
