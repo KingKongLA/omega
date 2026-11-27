@@ -890,7 +890,7 @@ function searchPast(text) {
   });
   return { text: notes.join('\n\n'), found: top.map(x => `"${clip(x.c.title || 'a chat', 34)}" (${when(x.c)})`), strong: !!top[0].hits && top[0].hits >= Math.min(3, terms.length) };
 }
-let pastNote = ''; // what OMEGA found in your old chats for the message being answered
+let pastNote = '', memPending = null; // what OMEGA found in your old chats for the message being answered
 function memoryHint(text) {
   const past = pastNote ? `(From your past chats with me, in case it helps. Use it if the user is talking about it; do not mention chats that aren't relevant:\n${pastNote})\n\n` : '';
   return past + memoryHint0(text);
@@ -1471,7 +1471,7 @@ async function cloudChatOnce(messages, o) {
     }
     if (r.ok && used && CLOUD_MODELS[prov]) store.set('cloudOk_' + prov, used);
     clearTimeout(busyNote);
-    if (free && !hubName && (r.status === 429 || r.status === 402)) cloudCoolUntil = Date.now() + 45000; // the free cloud's per-minute limit: let the phone brain answer for a bit
+    if (free && !hubName && !o.bg && (r.status === 429 || r.status === 402)) cloudCoolUntil = Date.now() + 45000; // the free cloud's per-minute limit: let the phone brain answer for a bit
     if (!r.ok) { let m = 'HTTP ' + r.status; try { const j = await r.json(); m = (j.error && j.error.message) || m; } catch (_) { } if (r.status === 401 || r.status === 403) m = 'the cloud key is not valid'; if (r.status === 402 && free) m = 'the free cloud is busy right now'; if (r.status === 429) m = 'free limit reached for now'; throw new Error(m); }
     const rd = r.body.getReader(), dec = new TextDecoder(); let buf = '', text = '', reason = '', model = '', inThought = false;
     while (true) {
@@ -1515,6 +1515,7 @@ async function answerInCloud(text, live, att, ui, turn, media = []) {
   const t0 = Date.now(), o = { ui, deep: thinkOn(), maxTokens: codeMode ? 6000 : 2000, temperature: codeMode ? 0.3 : 0.6, onText: out => { showThoughts(ui, out, t0); render(ui.ans, thinkStrip(out), true); toBottom(); } };
   render(ui.ans, '', true); if (window.OMEGA) window.OMEGA.lastPrompt = messages;
   let raw;
+  if (memPending) { ui.wt.textContent = '🧠 Saving a memory first…'; await Promise.race([memPending, sleep(12000)]); } // the free cloud answers one thing at a time
   try { raw = await cloudChat(messages, o); }
   catch (e) { if (stopFlag || !/empty answer|took too long|Failed to fetch|network|HTTP 5/i.test(e.message)) throw e; ui.wt.textContent = '☁️ Asking the cloud brain again…'; raw = await cloudChat(messages, o); } // the free cloud sometimes hiccups: one quick retry
   const th = thoughtsOf(raw); if (th) { turn.think = clip(th, 6000); showThoughts(ui, raw, t0, true); }
@@ -1815,7 +1816,7 @@ async function send(opts = {}) {
     if ((ui.steps && ui.steps.length) || ui._th) { showThoughts(ui, null, ui._t0, true); if (ui.steps && ui.steps.length) turn.steps = ui.steps.slice(0, 30); }
     ui.work.classList.add('done'); // finished: stop the little spinner next to the status line
     saveChats(); setBusy(false); toBottom();
-    if (turn.text && !stopFlag && !turn.noMem && settings.autoMemory !== false && cloudOn() && !window.__omegaNoMemory) smartMemory(text, turn, ui).catch(() => { });
+    if (turn.text && !stopFlag && !turn.noMem && settings.autoMemory !== false && cloudOn() && !window.__omegaNoMemory) { const p = smartMemory(text, turn, ui).catch(() => { }); memPending = p; p.finally(() => { if (memPending === p) memPending = null; }); }
   }
 }
 // ---- smart memory (like ChatGPT and Claude): after you talk, a big brain decides what's worth remembering ----
@@ -1829,7 +1830,7 @@ Write each memory as one short line in ${name}'s own voice, starting with "I" or
 Reply with JSON only: {"add":[],"update":[{"old":"","new":""}],"forget":[]}`;
   const mem = facts.length ? facts.map(f => '- ' + f).join('\n') : '(none yet)';
   const user = `Existing memories:\n${clip(mem, 6000)}\n\n${name}'s latest message:\n${clip(text, 1500)}\n\n(OMEGA's reply, for context only, never save it: ${clip(turn.text, 500)})`;
-  const o = { maxTokens: 400, temperature: 0.1, onText: () => { } };
+  const o = { maxTokens: 400, temperature: 0.1, bg: true, onText: () => { } };
   const out = thinkStrip(await cloudChat([{ role: 'system', content: sys }, { role: 'user', content: user }], o));
   const j = out.match(/\{[\s\S]*\}/); if (!j) return;
   let r; try { r = JSON.parse(j[0]); } catch (_) { return; }
