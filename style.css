@@ -190,3 +190,15 @@ main{display:flex;flex-direction:column;height:100%;min-height:0;min-width:0;ove
 .selftest.warn { color: #b45309; }
 .selftest .btn { padding: 6px 12px; font-size: 14px; }
 .work.done .spin{display:none}
+
+/* live thinking panel (like ChatGPT / Claude) */
+.tlive{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px 12px}
+.tlive .thead{color:var(--mute);font-size:13px;font-weight:600}
+.tlive .tsec{font-weight:400;opacity:.7}
+.tlive .tstream{white-space:pre-wrap;color:var(--mute);font-size:13px;line-height:1.45;margin-top:6px;max-height:7.5em;overflow:hidden;-webkit-mask-image:linear-gradient(to bottom,transparent,#000 35%);mask-image:linear-gradient(to bottom,transparent,#000 35%);font-style:italic}
+.think ul.steps{list-style:none;margin:6px 0 2px;padding:0;font-size:13px;color:var(--mute)}
+.think ul.steps li{padding:2px 0 2px 18px;position:relative}
+.think ul.steps li::before{content:'';position:absolute;left:4px;top:9px;width:6px;height:6px;border-radius:50%;background:var(--mute);opacity:.6}
+.think ul.steps li.now{color:var(--ink)}
+.think ul.steps li.now::before{background:var(--acc);opacity:1;animation:pulse 1.2s ease-in-out infinite}
+.think details[open] ul.steps{margin-top:8px}

@@ -7,7 +7,7 @@ const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.89';
 const WLLAMA_URL = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/index.js';
 const WLLAMA_WASM = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/wasm/wllama.wasm';
 const PROXY = 'https://proxy.cors.dev/';
-const VERSION = '3.5.0';
+const VERSION = '3.5.1';
 
 const MODELS = [
   { key: 'cpu-qwen3-0.6b', engine: 'cpu', name: 'Qwen3 0.6B', repo: 'unsloth/Qwen3-0.6B-GGUF', file: 'Qwen3-0.6B-Q4_K_M.gguf', sizeMB: 400, memMB: 650, thinking: true, desc: 'Recommended for phones and tablets. Runs on the processor, so it does not crash.' },
@@ -788,14 +788,39 @@ async function dropEngine() { if (typeof enginePending !== 'undefined' && engine
 function e0stop() { engine && engine.stop(); }
 const thoughtsOf = t => { const m = String(t).match(/<think>([\s\S]*?)(?:<\/think>|$)/); return m ? m[1].trim() : ''; };
 const thinkOn = () => $('#thinkChip') && $('#thinkChip').getAttribute('aria-pressed') === 'true';
-function showThoughts(ui, out, t0, done) {
-  const th = thoughtsOf(out); if (!th) return;
-  const finished = done || /<\/think>/.test(out), secs = Math.max(1, Math.round((Date.now() - t0) / 1000));
-  if (!ui.think.dataset.secs && finished) ui.think.dataset.secs = secs;
-  ui.think.hidden = false;
-  ui.think.innerHTML = finished ? `<details><summary>💡 Thought for ${ui.think.dataset.secs || secs}s</summary><div class="tbody"></div></details>` : `<div class="thinking">💡 Thinking<span class="dots"></span> <span class="hint">${th.split(/\s+/).length} words</span></div>`;
-  const b = ui.think.querySelector('.tbody'); if (b) b.textContent = th;
+// The thinking panel (like ChatGPT / Claude): while OMEGA works you see each step it takes and its thoughts streaming live;
+// when it's done it folds into "Thought for 8s", which you can tap to open again.
+function step(ui, txt) {
+  if (!ui || !ui.think) return;
+  ui.steps = ui.steps || []; if (!ui._t0) ui._t0 = Date.now();
+  if (ui.steps[ui.steps.length - 1] === txt) return;
+  ui.steps.push(txt); showThoughts(ui, null, ui._t0, false);
 }
+function showThoughts(ui, out, t0, done) {
+  if (out != null) { const th = thoughtsOf(out); if (th) ui._th = th; }
+  const th = ui._th || '', steps = ui.steps || [];
+  if (!th && !steps.length) return;
+  if (!ui._t0) ui._t0 = t0 || Date.now();
+  const finished = !!done || (out != null && /<\/think>/.test(out));
+  const secs = Math.max(1, Math.round((Date.now() - ui._t0) / 1000));
+  if (finished && !ui.think.dataset.secs) ui.think.dataset.secs = secs;
+  ui.think.hidden = false;
+  const stepsHtml = steps.length ? `<ul class="steps">${steps.map((s, i) => `<li class="${!finished && i === steps.length - 1 && !th ? 'now' : 'did'}">${esc(s)}</li>`).join('')}</ul>` : '';
+  const label = th ? `Thought for ${ui.think.dataset.secs || secs}s` : `Worked for ${ui.think.dataset.secs || secs}s · ${steps.length} step${steps.length === 1 ? '' : 's'}`;
+  if (finished) {
+    const wasOpen = !!ui.think.querySelector('details[open]');
+    ui.think.innerHTML = `<details${wasOpen ? ' open' : ''}><summary>💡 ${label}</summary>${stepsHtml}<div class="tbody"></div></details>`;
+    const b = ui.think.querySelector('.tbody'); if (b) { b.textContent = th; b.hidden = !th; }
+  } else {
+    if (!ui.think.querySelector('.tlive')) ui.think.innerHTML = `<div class="tlive"><div class="thead">💡 <span class="tl">Thinking</span><span class="dots"></span><span class="tsec"></span></div><div class="tsteps"></div><div class="tstream" hidden></div></div>`;
+    ui.think.querySelector('.tsteps').innerHTML = stepsHtml;
+    ui.think.querySelector('.tsec').textContent = ' ' + secs + 's';
+    const s = ui.think.querySelector('.tstream');
+    if (th) { s.hidden = false; s.textContent = th.length > 1500 ? '…' + th.slice(-1500) : th; s.scrollTop = s.scrollHeight; }
+  }
+}
+// keep the "Thinking 7s" timer ticking while OMEGA works
+setInterval(() => { document.querySelectorAll('.tlive .tsec').forEach(el => { const ui = el.closest('.msg') && el.closest('.msg')._ui; if (ui && ui._t0) el.textContent = ' ' + Math.round((Date.now() - ui._t0) / 1000) + 's'; }); }, 1000);
 const thinkStrip = t => t.replace(/<think>[\s\S]*?<\/think>\s*/g, '').replace(/<think>[\s\S]*$/, '');
 
 // ---------------- prompt ----------------
@@ -1057,7 +1082,7 @@ async function answerWithEyes(text, att, media, ui, turn) {
   parts.push({ type: 'text', text: ask });
   const sys = `You are OMEGA, ${profile.name || 'the user'}'s friendly AI assistant. You can see the photos the user sends. Describe what is really there, read any text exactly, and answer the question directly and casually. If you are not sure about something in the picture, say so.`;
   // online with the free cloud brain: OMEGA's eyes describe the picture, then the big cloud brain answers (much smarter answers)
-  if (cloudOn() && cloudFree() && !polliKey() && !stopFlag) {
+  if (cloudOn() && !cloudSees() && !stopFlag) { // the cloud can't see photos: OMEGA's eyes look, the cloud answers
     try {
       ui.work.hidden = false; ui.wt.textContent = vid ? 'Looking closely at your video…' : 'Looking closely at your photo…';
       const dparts = imgs.map(im => ({ type: 'image', data: im.data }));
@@ -1090,13 +1115,31 @@ const polliKey = () => /^(sk_|pk_|plln_)/.test(settings.cloudKey || ''); // a fr
 // Its keys live on the server, never in this public code. If it's not set up or all are busy, OMEGA uses the Pollinations free brain, then the phone brain.
 const HUB = 'https://omega-brain.vercel.app';
 let hub = store.get('hub', { ready: [], t: 0 });
-const hubReady = () => cloudFree() && hub.ready && hub.ready.length > 0 && Date.now() >= hubCoolUntil;
+const hubReady = () => cloudProvider() === 'free' && hub.ready && hub.ready.length > 0 && Date.now() >= hubCoolUntil;
 let hubCoolUntil = 0;
 async function checkHub() {
   try { const r = await fetch(HUB + '/api/health', { cache: 'no-store' }); const j = await r.json(); hub = { ready: Array.isArray(j.ready) ? j.ready : [], t: Date.now() }; store.set('hub', hub); } catch (e) { }
   try { syncCloud(); } catch (e) { }
 }
 if (!window.__omegaNoCloud) { setTimeout(checkHub, 1500); setInterval(checkHub, 10 * 60 * 1000); }
+// which cloud brain your key is for (you paste one key in Settings; OMEGA works out the rest)
+let cloudForceFree = false;
+function cloudProvider() {
+  const k = (settings.cloudKey || '').trim();
+  if (!k || cloudForceFree) return 'free';
+  if (/^AIza/.test(k)) return 'gemini';     // Google AI Studio (free tier): smart, sees photos, thinks out loud
+  if (/^gsk_/.test(k)) return 'groq';       // Groq (free tier): super fast big open models
+  if (/^(sk_|pk_|plln_)/.test(k)) return 'polli';
+  return 'openrouter';                       // sk-or-...: free models incl. DeepSeek
+}
+const cloudSees = () => ['gemini', 'polli', 'openrouter'].includes(cloudProvider()); // can it look at photos itself?
+const CLOUD_NAME = { free: 'the free cloud brain', gemini: 'Gemini', groq: 'Groq', polli: 'Pollinations', openrouter: 'OpenRouter' };
+// best models first; if one isn't on your free plan (or is busy) OMEGA tries the next one and remembers what worked
+const CLOUD_MODELS = {
+  gemini: ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest'],
+  groq: ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b', 'moonshotai/kimi-k2-instruct', 'llama-3.3-70b-versatile', 'openai/gpt-oss-20b'],
+  openrouter: ['deepseek/deepseek-chat-v3.1:free', 'deepseek/deepseek-r1:free', 'openrouter/free'],
+};
 let cloudCoolUntil = 0; // after a "too many requests" from the free brain, let the phone brain answer for a bit
 let cloudAbort = null;
 // ---------------- OMEGA tests the apps and games it makes (like a developer would) ----------------
@@ -1130,12 +1173,12 @@ const lastHtml = t => { const all = [...String(t).matchAll(/```(html|htm)?\s*\n(
 async function testAndFix(ui, turn) {
   const m = lastHtml(turn.text); if (!m) return;
   const badge = (txt, cls) => { const b = document.createElement('div'); b.className = 'hint selftest ' + (cls || ''); b.textContent = txt; ui.ans.after(b); return b; };
-  ui.work.hidden = false; ui.wt.textContent = '🧪 Testing the app…';
+  ui.work.hidden = false; ui.wt.textContent = '🧪 Testing the app…'; step(ui, '🧪 Testing the app: opening it and tapping its buttons');
   let r = await selfTest(m[2]);
-  if (!r.errs.length) { badge(r.timeout ? '🧪 Tested: it loads (OMEGA could not finish the tap test).' : '✅ OMEGA tested it: it opens and reacts to taps with no errors.'); ui.wt.textContent = 'Tested the app'; turn.tested = 'ok'; return; }
+  if (!r.errs.length) { step(ui, '✅ It runs with no errors'); badge(r.timeout ? '🧪 Tested: it loads (OMEGA could not finish the tap test).' : '✅ OMEGA tested it: it opens and reacts to taps with no errors.'); ui.wt.textContent = 'Tested the app'; turn.tested = 'ok'; return; }
   const errText = r.errs.slice(0, 3).join('\n');
   if (cloudOn() && !stopFlag) {
-    ui.wt.textContent = '🛠 Found a bug while testing. Fixing it…';
+    ui.wt.textContent = '🛠 Found a bug while testing. Fixing it…'; step(ui, `🐞 Found a bug: ${clip(r.errs[0], 70)}`); step(ui, '🛠 Fixing it and testing again');
     try {
       const raw = await cloudChat([{ role: 'system', content: systemPrompt(true, false) }, { role: 'user', content: `This app has a bug. When I ran it and tapped around, I got these errors:\n${errText}\n\nHere is the code:\n\n\`\`\`html\n${m[2]}\n\`\`\`\n\nFix the bug. Give back the WHOLE fixed file in one \`\`\`html block, then one short sentence about what you fixed.` }], { maxTokens: 6000, temperature: 0.2, onText: () => { } });
       const fx = lastHtml(thinkStrip(raw));
@@ -1163,7 +1206,7 @@ async function editVideo(text, files, ui, turn) {
   ui.work.hidden = false;
   // iPhone/iPad: Safari closes tabs that use too much memory, so put the chat brain away while editing (it comes back in seconds)
   if (IS_IOS && engine && !loading) { ui.wt.textContent = '🎬 Making room for the video editor…'; await dropEngine(); }
-  ui.wt.textContent = '🎬 Planning your edit…';
+  ui.wt.textContent = '🎬 Planning your edit…'; step(ui, '🎬 Working out the edit you want');
   const rules = V.planFromText(text, vids.length, imgs.length);
   let plan = null;
   if (cloudOn()) { // the cloud brain understands messy requests best ("cut the boring part at the start and make it tiktok ready")
@@ -1184,7 +1227,7 @@ async function editVideo(text, files, ui, turn) {
   }
   const t0 = Date.now();
   try {
-    const r = await V.run(text, files, plan, msg => { ui.wt.textContent = '🎬 ' + msg; }, p => { ui.wt.textContent = `🎬 Editing… ${Math.round(p * 100)}%`; });
+    const r = await V.run(text, files, plan, msg => { ui.wt.textContent = '🎬 ' + msg; step(ui, '🎬 ' + msg); }, p => { ui.wt.textContent = `🎬 Editing… ${Math.round(p * 100)}%`; });
     if (stopFlag) { turn.text = '(stopped)'; render(ui.ans, turn.text); return; }
     if (r.transcript !== undefined) { // "transcribe this video": the words, with times
       const lines = []; let cur = null;
@@ -1216,7 +1259,18 @@ async function editVideo(text, files, ui, turn) {
 }
 // The free cloud stops each answer after about 800 words-pieces. For long answers (whole apps and games),
 // OMEGA asks it to keep going and stitches the parts together, so the code comes out complete.
+// your key's brain first; if it fails (free limit reached, key problem), the free no-key cloud brain answers instead
 async function cloudChat(messages, o) {
+  if (cloudProvider() === 'free' || o._fb) return cloudChatLong(messages, o);
+  try { return await cloudChatLong(messages, o); }
+  catch (e) {
+    if (stopFlag) throw e;
+    if (o.ui) { o.ui.wt.textContent = `☁️ ${CLOUD_NAME[cloudProvider()]} is busy (${clip(e.message, 40)}), asking the free cloud brain…`; step(o.ui, `↪️ ${CLOUD_NAME[cloudProvider()]} didn't answer (${clip(e.message, 40)}), so the free cloud brain is answering`); }
+    cloudForceFree = true;
+    try { const r = await cloudChatLong(messages, { ...o, _fb: true }); o.model = 'free cloud'; return r; } finally { cloudForceFree = false; }
+  }
+}
+async function cloudChatLong(messages, o) {
   let all = '', thoughts = '', parts = 0;
   const show = o.onText;
   while (true) {
@@ -1259,40 +1313,57 @@ async function cloudChatOnce(messages, o) {
   cloudAbort = new AbortController(); const sig = cloudAbort.signal;
   const t = setTimeout(() => cloudAbort.abort(), 120000);
   try {
-    if (cloudFree() && Date.now() < cloudCoolUntil) throw new Error('free cloud brain is busy, try again in a minute');
-    const free = cloudFree();
+    if (cloudProvider() === 'free' && !hubReady() && Date.now() < cloudCoolUntil) throw new Error('free cloud brain is busy, try again in a minute');
+    const free = cloudProvider() === 'free';
     const busyNote = setTimeout(() => { if (o.ui && !o.got) o.ui.wt.textContent = '☁️ The free cloud brain is busy, your answer is on the way…'; }, 9000);
-    const textOnly = messages.map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : m.content.filter(p => p.type === 'text').map(p => p.text).join('\n') }));
-    let hubName = '', r = null;
+    const prov = cloudProvider();
+    const textOnly = ms => ms.map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : m.content.filter(p => p.type === 'text').map(p => p.text).join('\n') }));
+    const deep = !!o.deep; // Think chip on: think harder
+    const request = model => {
+      if (prov === 'gemini') return fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.cloudKey.trim() },
+        body: JSON.stringify({ model, messages, stream: true, max_tokens: Math.max(o.maxTokens, 4000), temperature: o.temperature, extra_body: { google: { thinking_config: { thinking_level: deep ? 'high' : 'low', include_thoughts: true } } } }) });
+      if (prov === 'groq') return fetch('https://api.groq.com/openai/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.cloudKey.trim() },
+        body: JSON.stringify({ model, messages: textOnly(messages), stream: true, max_tokens: o.maxTokens, temperature: o.temperature, ...(/gpt-oss|qwen3|r1/.test(model) ? { reasoning_format: 'parsed', reasoning_effort: deep ? 'high' : 'medium' } : {}) }) });
+      if (prov === 'polli') return fetch('https://gen.pollinations.ai/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.cloudKey }, body: JSON.stringify({ model: 'openai', messages, stream: true, max_tokens: o.maxTokens, temperature: o.temperature }) });
+      if (prov === 'openrouter') return fetch('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.cloudKey, 'X-Title': 'OMEGA' },
+        body: JSON.stringify({ model, messages, stream: true, max_tokens: o.maxTokens, temperature: o.temperature }) });
+      return fetch('https://text.pollinations.ai/openai', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'openai', messages: textOnly(messages), stream: true, max_tokens: o.maxTokens, temperature: o.temperature, private: true, referrer: 'omega', ...(deep ? { reasoning_effort: 'high' } : {}) }) });
+    };
+    // pick the model: the one that worked last time first, then the rest of the list
+    const list = CLOUD_MODELS[prov] ? [...new Set([settings.cloudModel && CLOUD_MODELS[prov].includes(settings.cloudModel) ? settings.cloudModel : null, store.get('cloudOk_' + prov), ...CLOUD_MODELS[prov]].filter(Boolean))] : [null];
+    const textOnlyMsgs = messages.map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : m.content.filter(p => p.type === 'text').map(p => p.text).join('\n') }));
+    let hubName = '';
+    let r = null, used = null;
     if (hubReady()) { // OMEGA's own switchboard first: the strongest free brains
       try {
-        const h = await fetch(HUB + '/api/chat', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: textOnly, max_tokens: o.maxTokens, temperature: o.temperature }) });
+        const h = await fetch(HUB + '/api/chat', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: textOnlyMsgs, max_tokens: o.maxTokens, temperature: o.temperature }) });
         if (h.ok && h.body) { r = h; hubName = h.headers.get('X-Omega-Provider') || 'free brain'; }
         else { hubCoolUntil = Date.now() + (h.status === 503 ? 60000 : 15000); try { await h.body?.cancel(); } catch (_) { } }
       } catch (e) { if (sig.aborted) throw e; hubCoolUntil = Date.now() + 15000; }
     }
-    if (!r) r = polliKey()
-      ? await fetch('https://gen.pollinations.ai/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.cloudKey }, body: JSON.stringify({ model: 'openai', messages, stream: true, max_tokens: o.maxTokens, temperature: o.temperature }) })
-      : free
-      ? await fetch('https://text.pollinations.ai/openai', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'openai', messages: textOnly, stream: true, max_tokens: o.maxTokens, temperature: o.temperature, private: true, referrer: 'omega' }) })
-      : await fetch('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', signal: sig, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.cloudKey, 'X-Title': 'OMEGA' },
-      body: JSON.stringify({ model: settings.cloudModel || 'openrouter/free', messages, stream: true, max_tokens: o.maxTokens, temperature: o.temperature }) });
+    if (!r) for (const model of list) {
+      r = await request(model); used = model;
+      if (r.ok || !CLOUD_MODELS[prov] || ![400, 404, 429, 403, 503].includes(r.status) || r.status === 401) break;
+      if (r.status === 403 && prov !== 'gemini') break;
+      try { await r.text(); } catch (_) { } // try the next model
+    }
+    if (r.ok && used && CLOUD_MODELS[prov]) store.set('cloudOk_' + prov, used);
     clearTimeout(busyNote);
     if (free && !hubName && (r.status === 429 || r.status === 402)) cloudCoolUntil = Date.now() + 45000; // the free cloud's per-minute limit: let the phone brain answer for a bit
     if (!r.ok) { let m = 'HTTP ' + r.status; try { const j = await r.json(); m = (j.error && j.error.message) || m; } catch (_) { } if (r.status === 401 || r.status === 403) m = 'the cloud key is not valid'; if (r.status === 402 && free) m = 'the free cloud is busy right now'; if (r.status === 429) m = 'free limit reached for now'; throw new Error(m); }
-    const rd = r.body.getReader(), dec = new TextDecoder(); let buf = '', text = '', reason = '', model = '';
+    const rd = r.body.getReader(), dec = new TextDecoder(); let buf = '', text = '', reason = '', model = '', inThought = false;
     while (true) {
       const { done, value } = await rd.read(); if (done) break;
       buf += dec.decode(value, { stream: true }); const lines = buf.split('\n'); buf = lines.pop();
       for (const ln of lines) {
         const l = ln.trim(); if (!l.startsWith('data:')) continue; const d = l.slice(5).trim(); if (d === '[DONE]') continue;
-        try { const j = JSON.parse(d); if (j.error) throw new Error(j.error.message || 'cloud error'); model = j.model || model; const ch0 = j.choices && j.choices[0]; if (ch0 && ch0.finish_reason) o.finish = ch0.finish_reason; const dl = (ch0 && ch0.delta) || {}; reason += dl.reasoning || dl.reasoning_content || ''; text += dl.content || ''; } catch (e) { if (/cloud error|error/i.test(e.message) && !/JSON/.test(e.message)) throw e; }
+        try { const j = JSON.parse(d); if (j.error) throw new Error(j.error.message || 'cloud error'); model = j.model || model; const ch0 = j.choices && j.choices[0]; if (ch0 && ch0.finish_reason) o.finish = ch0.finish_reason; const dl = (ch0 && ch0.delta) || {}; reason += dl.reasoning || dl.reasoning_content || ''; let ct = dl.content || ''; if (ct && (inThought || /<thought>/.test(ct))) { const parts = ct.split(/(<\/?thought>)/); ct = ''; for (const p of parts) { if (p === '<thought>') inThought = true; else if (p === '</thought>') inThought = false; else if (inThought) reason += p; else ct += p; } } if (dl.extra_content && dl.extra_content.google && dl.extra_content.google.thought) { reason += ct; ct = ''; } text += ct; } catch (e) { if (/cloud error|error/i.test(e.message) && !/JSON/.test(e.message)) throw e; }
         o.got = true; o.onText(reason ? '<think>' + reason + (text ? '</think>' : '') + text : text);
         if (stopFlag) { cloudAbort.abort(); break; }
       }
       if (stopFlag) break;
     }
-    o.model = hubName || model;
+    o.model = hubName || model || used || '';
     if (!text.trim() && !stopFlag) throw new Error('empty answer');
     return reason ? '<think>' + reason + '</think>' + text : text;
   } catch (e) { if (sig.aborted && stopFlag) return ''; if (sig.aborted) throw new Error('took too long'); throw e; }
@@ -1300,7 +1371,7 @@ async function cloudChatOnce(messages, o) {
 }
 const toDataURL = buf => new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(new Blob([buf], { type: 'image/jpeg' })); });
 async function answerInCloud(text, live, att, ui, turn, media = []) {
-  if (media.length && cloudFree() && !polliKey()) throw new Error('the free cloud brain cannot see photos, using OMEGA\'s eyes');
+  if (media.length && !cloudSees()) throw new Error('the free cloud brain cannot see photos, using OMEGA\'s eyes');
   ui.work.hidden = false; ui.wt.textContent = '☁️ Asking the cloud brain…';
   const codeMode = $('#codeChip').getAttribute('aria-pressed') === 'true';
   const files = att ? attText(att) : '';
@@ -1317,16 +1388,16 @@ async function answerInCloud(text, live, att, ui, turn, media = []) {
   }
   const hist = historyFor(20000, true); if (hist.length) hist.pop(); // the cloud sees the newest code whole, so "make the buttons bigger" works
   // the free cloud cuts each answer at about 2,800 characters: ask for compact code so most apps fit in one go
-  const compact = codeMode && cloudFree() && !polliKey() && !hubReady() ? '\n\nKeep the html file compact so it fits in one reply: short CSS, short variable names, no comments, under about 2,500 characters if you can.' : '';
+  const compact = codeMode && cloudProvider() === 'free' && !hubReady() ? '\n\nKeep the html file compact so it fits in one reply: short CSS, short variable names, no comments, under about 2,500 characters if you can.' : '';
   const messages = [{ role: 'system', content: systemPrompt(codeMode, !!live) + compact }, ...hist, { role: 'user', content: user }];
-  const t0 = Date.now(), o = { ui, maxTokens: codeMode ? 6000 : 2000, temperature: codeMode ? 0.3 : 0.6, onText: out => { showThoughts(ui, out, t0); render(ui.ans, thinkStrip(out), true); toBottom(); } };
+  const t0 = Date.now(), o = { ui, deep: thinkOn(), maxTokens: codeMode ? 6000 : 2000, temperature: codeMode ? 0.3 : 0.6, onText: out => { showThoughts(ui, out, t0); render(ui.ans, thinkStrip(out), true); toBottom(); } };
   render(ui.ans, '', true); if (window.OMEGA) window.OMEGA.lastPrompt = messages;
   let raw;
   try { raw = await cloudChat(messages, o); }
   catch (e) { if (stopFlag || !/empty answer|took too long|Failed to fetch|network|HTTP 5/i.test(e.message)) throw e; ui.wt.textContent = '☁️ Asking the cloud brain again…'; raw = await cloudChat(messages, o); } // the free cloud sometimes hiccups: one quick retry
   const th = thoughtsOf(raw); if (th) { turn.think = clip(th, 6000); showThoughts(ui, raw, t0, true); }
   turn.text = thinkStrip(raw).trim() || '(stopped)';
-  ui.wt.textContent = `☁️ Answered by the cloud brain${o.model ? ' (' + o.model.replace(/:free$/, '') + ')' : ''}`;
+  ui.wt.textContent = `☁️ Answered by ${o.model === 'free cloud' ? 'the free cloud brain' : CLOUD_NAME[cloudProvider()]}${o.model && o.model !== 'free cloud' ? ' (' + o.model.replace(/:free$/, '').replace(/^models\//, '') + ')' : ''}`;
   render(ui.ans, turn.text);
 }
 // ask again: removes the last answer and gets a fresh one
@@ -1351,7 +1422,8 @@ function addBot() {
   const d = document.createElement('div'); d.className = 'msg bot';
   d.innerHTML = '<div class="av">Ω</div><div class="body"><div class="work" hidden><span class="spin"></span><span class="wt"></span></div><div class="live" hidden></div><div class="think" hidden></div><div class="md ans"><span class="typing"><i></i><i></i><i></i></span></div><div class="srcs"></div><div class="acts" hidden></div></div>';
   col.appendChild(d);
-  return { el: d, think: d.querySelector('.think'), work: d.querySelector('.work'), wt: d.querySelector('.wt'), live: d.querySelector('.live'), ans: d.querySelector('.ans'), srcs: d.querySelector('.srcs'), acts: d.querySelector('.acts') };
+  const ui = { el: d, think: d.querySelector('.think'), work: d.querySelector('.work'), wt: d.querySelector('.wt'), live: d.querySelector('.live'), ans: d.querySelector('.ans'), srcs: d.querySelector('.srcs'), acts: d.querySelector('.acts') };
+  d._ui = ui; return ui;
 }
 function showSources(ui, srcs) {
   ui.srcs.innerHTML = (srcs || []).filter(s => /^https:\/\//.test(s.url)).slice(0, 8).map(s => { let h = ''; try { h = new URL(s.url).hostname.replace(/^www\./, ''); } catch (e) { } return `<a href="${esc(s.url)}" target="_blank" rel="noopener" title="${esc(s.title)}">${esc(h === 'news.google.com' ? s.title : h || s.title)}</a>`; }).join('');
@@ -1374,7 +1446,7 @@ function staticTurns() {
   let lastQ = '';
   for (const t of chat.turns) {
     if (t.role === 'user') { addUser(t.text, t.att); lastQ = t.text; }
-    else { const ui = addBot(); if (t.live) { ui.live.textContent = t.live; ui.live.hidden = false; } if (t.think) { ui.think.dataset.secs = '…'; showThoughts(ui, '<think>' + t.think + '</think>', Date.now(), true); ui.think.querySelector('summary').textContent = '💡 Show thinking'; } render(ui.ans, t.text); showSources(ui, t.sources); showActs(ui, t, lastQ); }
+    else { const ui = addBot(); if (t.live) { ui.live.textContent = t.live; ui.live.hidden = false; } if (t.think || (t.steps && t.steps.length)) { ui.think.dataset.secs = '…'; ui.steps = t.steps || []; showThoughts(ui, t.think ? '<think>' + t.think + '</think>' : null, Date.now(), true); ui.think.querySelector('summary').textContent = t.think ? '💡 Show thinking' : `💡 Show the ${ui.steps.length} step${ui.steps.length === 1 ? '' : 's'}`; } render(ui.ans, t.text); showSources(ui, t.sources); showActs(ui, t, lastQ); }
   }
 }
 
@@ -1410,7 +1482,7 @@ async function send(opts = {}) {
       if (edFiles.length) { await editVideo(text, edFiles, ui, turn); return; }
     }
     if (media.length) {
-      if (cloudOn() && (!cloudFree() || polliKey())) { try { await answerInCloud(text, '', att, ui, turn, media); return; } catch (e) { if (stopFlag) return; ui.work.hidden = false; ui.wt.textContent = `Cloud brain unavailable, using OMEGA's own eyes`; } }
+      if (cloudOn() && cloudSees()) { try { step(ui, `👁 ${CLOUD_NAME[cloudProvider()]} is looking at your ${media.some(m => m.kind === 'video') ? 'video' : 'photo'}`); await answerInCloud(text, '', att, ui, turn, media); return; } catch (e) { if (stopFlag) return; ui.work.hidden = false; ui.wt.textContent = `Cloud brain unavailable, using OMEGA's own eyes`; } }
       await answerWithEyes(text, att, media, ui, turn); return;
     }
     // memory command
@@ -1472,6 +1544,9 @@ async function send(opts = {}) {
       const tools = navigator.onLine === false || att ? [] : decideTools(text); // no internet (or a file to read): skip live info
       if (tools.length) {
         ui.work.hidden = false; ui.wt.textContent = 'Checking live info: ' + tools.map(t => t[0]).join(', ') + '…';
+        const q40 = clip(cleanQuery(text) || text, 48);
+        const STEP = { weather: '🌤 Checking the weather', news: `📰 Reading the latest news about "${q40}"`, web: `🔎 Searching the web for "${q40}"`, wiki: `📚 Looking up "${q40}"`, sports: '🏟 Checking live scores on ESPN', stocks: '📈 Checking live stock prices', crypto: '🪙 Checking crypto prices', currency: '💱 Checking exchange rates', time: '🕒 Checking the time', read: '📖 Reading the page you sent', research: `🔬 Researching "${q40}": 3 searches, then reading the top pages` };
+        tools.forEach(t => step(ui, STEP[t[0]] || `🔎 Looking up ${t[0]}`));
         const res = await Promise.allSettled(tools.map(t => t[1]()));
         const ok = res.filter(r => r.status === 'fulfilled').map(r => r.value);
         ok.forEach(r => turn.sources.push(...r.sources));
@@ -1483,6 +1558,7 @@ async function send(opts = {}) {
           ui.work.hidden = true; ui.live.hidden = true; turn.live = ''; turn.text = ok[0].answer; render(ui.ans, turn.text); return;
         }
         ui.wt.textContent = ok.length ? `Checked ${ok.map(r => r.label.toLowerCase()).join(', ')}` : 'Live info unavailable right now';
+        step(ui, ok.length ? `✓ Got live info${turn.sources.length ? ` from ${turn.sources.length} source${turn.sources.length === 1 ? '' : 's'}` : ''}` : '⚠️ Live info was unavailable');
         if (!ok.length && res.length && tools.some(t => t[0] !== 'web')) live = 'LIVE INFO: the lookup failed just now (no internet or sources busy). Tell the user you could not get live info this time.';
       }
     }
@@ -1602,6 +1678,7 @@ async function send(opts = {}) {
     if (turn.text && turn.memo) { const mm = document.createElement('div'); mm.className = 'hint memo'; mm.textContent = '🧠 Memory updated: ' + turn.memo.join(' · '); ui.ans.after(mm); }
     if (turn.text) { chat.turns.push(turn); showSources(ui, turn.sources); showActs(ui, turn, text); if (spoken && !stopFlag && settings.voiceReply !== false) { const rb = ui.acts.querySelector('[data-a=read]'); if (rb) speak(turn.text, rb); } }
     else chat.turns.pop();
+    if ((ui.steps && ui.steps.length) || ui._th) { showThoughts(ui, null, ui._t0, true); if (ui.steps && ui.steps.length) turn.steps = ui.steps.slice(0, 30); }
     ui.work.classList.add('done'); // finished: stop the little spinner next to the status line
     saveChats(); setBusy(false); toBottom();
   }
@@ -1668,7 +1745,7 @@ $('#cloudOn').onchange = e => { settings.cloud = e.target.checked; store.set('se
 $('#cloudKey').onchange = e => { settings.cloudKey = e.target.value.trim(); store.set('settings', settings); syncCloud(); };
 function syncCloud() {
   $('#cloudOn').checked = settings.cloud !== false; $('#cloudKey').value = settings.cloudKey || '';
-  $('#cloudState').textContent = settings.cloud === false ? 'Off: everything stays on this device.' : navigator.onLine === false ? 'On, but you are offline: the phone brain answers.' : !settings.cloudKey && hub.ready && hub.ready.length ? `On: answers come from OMEGA's own switchboard of free top AI brains (${hub.ready.length} ready: ${hub.ready.join(', ')}), then Pollinations, then the phone brain. Your messages go to whichever one answers.` : settings.cloudKey ? (polliKey() ? 'On, with your Pollinations key: faster cloud answers, and it can see photos. Your messages go to Pollinations.' : 'On: answers come from free OpenRouter models when you are online. Your messages go to OpenRouter.') : 'On: answers come from a big free cloud brain (Pollinations, no key needed) when you are online. Your messages go to Pollinations. Photos and videos stay with the phone brain. Add an OpenRouter key below for cloud eyes too.';
+  $('#cloudState').textContent = settings.cloud === false ? 'Off: everything stays on this device.' : navigator.onLine === false ? 'On, but you are offline: the phone brain answers.' : (hub.ready && hub.ready.length && !cloudForceFree && cloudProvider() === 'free' ? `On: answers come from OMEGA's own switchboard of free top AI brains (${hub.ready.length} ready: ${hub.ready.join(', ')}), then Pollinations, then the phone brain. Your messages go to whichever one answers. Paste a free key below for your own brain.` : null) || ({ free: 'On: answers come from a big free cloud brain (Pollinations, no key needed) when you are online. Your messages go to Pollinations. Photos and videos stay with the phone brain. Paste a free key below for a smarter, faster brain.', gemini: 'On, with your Google Gemini key: a smart brain that thinks out loud and can see photos. Your messages go to Google. If it hits its free limit, the free cloud or phone brain answers.', groq: 'On, with your Groq key: very fast big open models. Your messages go to Groq.', polli: 'On, with your Pollinations key: faster cloud answers, and it can see photos. Your messages go to Pollinations.', openrouter: 'On, with your OpenRouter key: free models like DeepSeek. Your messages go to OpenRouter.' })[cloudProvider()];
 }
 $('#autoPick').onchange = e => { settings.auto = e.target.checked; settings.skipRec = null; store.set('settings', settings); if (!chat) refreshWelcome(); };
 $('#loadBtn').onclick = () => {
