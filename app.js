@@ -7,7 +7,7 @@ const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.89';
 const WLLAMA_URL = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/index.js';
 const WLLAMA_WASM = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/wasm/wllama.wasm';
 const PROXY = 'https://proxy.cors.dev/';
-const VERSION = '3.8.0';
+const VERSION = '3.9.0';
 
 const MODELS = [
   { key: 'cpu-qwen3-0.6b', engine: 'cpu', name: 'Qwen3 0.6B', repo: 'unsloth/Qwen3-0.6B-GGUF', file: 'Qwen3-0.6B-Q4_K_M.gguf', sizeMB: 400, memMB: 650, thinking: true, desc: 'Recommended for phones and tablets. Runs on the processor, so it does not crash.' },
@@ -610,8 +610,65 @@ function quickConvert(text) {
   const a = unitOf(m[2]), b = unitOf(m[3]); if (!a || !b || UNITS[a][0] !== b) return null;
   const [, k, an, bn] = UNITS[a]; return `${fmtNum(+m[1])} ${an} = ${fmtNum(Math.round(+m[1] * k * 100) / 100)} ${bn}`;
 }
+// ---- instant unit answers: "how many feet in a mile", "5 cups to ml", "60 mph in km/h" (no internet needed) ----
+const U = {}; // unit -> [kind, size in base unit, singular, plural]
+const addU = (kind, list) => { for (const [k, f, s, p, words] of list) U[k] = { kind, f, s, p, words }; };
+addU('length', [['mm', 0.001, 'millimeter', 'millimeters', 'mm|millimeters?|millimetres?'], ['cm', 0.01, 'centimeter', 'centimeters', 'cm|centimeters?|centimetres?'], ['m', 1, 'meter', 'meters', 'm|meters?|metres?'], ['km', 1000, 'kilometer', 'kilometers', 'km|kms|kilometers?|kilometres?|klicks?'], ['in', 0.0254, 'inch', 'inches', 'in|inch|inches|"'], ['ft', 0.3048, 'foot', 'feet', 'ft|foot|feet|\''], ['yd', 0.9144, 'yard', 'yards', 'yds?|yards?'], ['mi', 1609.344, 'mile', 'miles', 'mi|miles?'], ['nmi', 1852, 'nautical mile', 'nautical miles', 'nautical miles?|nmi']]);
+addU('mass', [['mg', 1e-6, 'milligram', 'milligrams', 'mg|milligrams?'], ['g', 0.001, 'gram', 'grams', 'g|grams?|gr'], ['kg', 1, 'kilogram', 'kilograms', 'kg|kgs|kilograms?|kilos?'], ['oz', 0.028349523125, 'ounce', 'ounces', 'oz|ounces?'], ['lb', 0.45359237, 'pound', 'pounds', 'lbs?|pounds?'], ['st', 6.35029318, 'stone', 'stone', 'stones?'], ['ton', 907.18474, 'ton', 'tons', 'tons?|short tons?'], ['t', 1000, 'metric ton', 'metric tons', 'metric tons?|tonnes?']]);
+addU('volume', [['ml', 0.001, 'milliliter', 'milliliters', 'ml|milliliters?|millilitres?'], ['l', 1, 'liter', 'liters', 'l|liters?|litres?'], ['tsp', 0.00492892159375, 'teaspoon', 'teaspoons', 'tsp|teaspoons?'], ['tbsp', 0.01478676478125, 'tablespoon', 'tablespoons', 'tbsp|tablespoons?'], ['floz', 0.0295735295625, 'fluid ounce', 'fluid ounces', 'fl ?oz|fluid ounces?'], ['cup', 0.2365882365, 'cup', 'cups', 'cups?'], ['pt', 0.473176473, 'pint', 'pints', 'pints?|pt'], ['qt', 0.946352946, 'quart', 'quarts', 'quarts?|qt'], ['gal', 3.785411784, 'gallon', 'gallons', 'gallons?|gal']]);
+addU('time', [['ms', 0.001, 'millisecond', 'milliseconds', 'ms|milliseconds?'], ['s', 1, 'second', 'seconds', 's|secs?|seconds?'], ['min', 60, 'minute', 'minutes', 'mins?|minutes?'], ['h', 3600, 'hour', 'hours', 'h|hrs?|hours?'], ['day', 86400, 'day', 'days', 'days?'], ['wk', 604800, 'week', 'weeks', 'weeks?|wks?'], ['mo', 2629746, 'month', 'months', 'months?'], ['yr', 31556952, 'year', 'years', 'years?|yrs?']]);
+addU('speed', [['mph', 0.44704, 'mph', 'mph', 'mph|miles per hour|miles an hour'], ['kmh', 1 / 3.6, 'km/h', 'km/h', 'km/h|kph|kmh|kilometers per hour|kilometres per hour'], ['mps', 1, 'm/s', 'm/s', 'm/s|meters per second'], ['kn', 0.514444, 'knot', 'knots', 'knots?']]);
+addU('area', [['sqft', 0.09290304, 'square foot', 'square feet', 'sq ?ft|square feet|square foot|ft2'], ['sqm', 1, 'square meter', 'square meters', 'sq ?m|square meters?|square metres?|m2'], ['acre', 4046.8564224, 'acre', 'acres', 'acres?'], ['ha', 10000, 'hectare', 'hectares', 'hectares?|ha'], ['sqmi', 2589988.110336, 'square mile', 'square miles', 'sq ?mi|square miles?'], ['sqkm', 1e6, 'square kilometer', 'square kilometers', 'sq ?km|square kilometers?|square kilometres?|km2']]);
+addU('data', [['b', 1, 'byte', 'bytes', 'bytes?'], ['kb', 1e3, 'KB', 'KB', 'kb|kilobytes?'], ['mb', 1e6, 'MB', 'MB', 'mb|megabytes?|megs?'], ['gb', 1e9, 'GB', 'GB', 'gb|gigabytes?|gigs?'], ['tb', 1e12, 'TB', 'TB', 'tb|terabytes?']]);
+const U_ALT = Object.entries(U).flatMap(([k, u]) => u.words.split('|').map(w => [w, k])).sort((a, b) => b[0].length - a[0].length);
+const U_RE = U_ALT.map(([w]) => w.replace(/[.*+?^${}()[\]\\]/g, m => m === '?' ? '?' : '\\' + m)).join('|');
+const unitKey = w => { w = String(w || '').toLowerCase().trim(); for (const [alt, k] of U_ALT) if (new RegExp('^(?:' + alt + ')$', 'i').test(w)) return k; return null; };
+const NUMW = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, twelve: 12, half: 0.5, quarter: 0.25, dozen: 12, hundred: 100, thousand: 1000 };
+const numOf = s => { s = String(s || '').trim().toLowerCase(); if (!s) return 1; if (NUMW[s] != null) return NUMW[s]; const fr = s.match(/^(\d+)\/(\d+)$/); if (fr) return +fr[1] / +fr[2]; const n = parseFloat(s); return isNaN(n) ? null : n; };
+const prettyNum = v => { const a = Math.abs(v); const r = a >= 100 ? Math.round(v * 100) / 100 : a >= 1 ? Math.round(v * 1e4) / 1e4 : +v.toPrecision(4); return fmtNum(r); };
+function convertUnits(n, from, to) {
+  const a = U[from], b = U[to]; if (!a || !b || a.kind !== b.kind || from === to) return null;
+  const v = n * a.f / b.f;
+  return `${fmtNum(n)} ${n === 1 ? a.s : a.p} = **${prettyNum(v)} ${Math.abs(v) === 1 ? b.s : b.p}**`;
+}
+function unitAnswer(text) {
+  const t = ' ' + text.toLowerCase().replace(/,(?=\d{3})/g, '').replace(/[?!]/g, ' ').replace(/\s+/g, ' ') + ' ';
+  const N = '(\\d+(?:\\.\\d+)?|\\d+\\/\\d+|a|an|one|two|three|four|five|six|seven|eight|nine|ten|twelve|half(?: a)?|a quarter|a dozen|a hundred|a thousand)';
+  const UN = '(' + U_RE + ')';
+  let m;
+  // "how many feet in a mile", "how many cups are in 2 gallons", "how many ounces is a pound"
+  if ((m = t.match(new RegExp('how (?:many|much)\\s+' + UN + '\\s+(?:are |is )?(?:there )?(?:in|per|is|are|make|makes|equals?|to)\\s+(?:' + N + '\\s*)?' + UN + '\\b', 'i')))) {
+    const to = unitKey(m[1]), from = unitKey(m[3]), n = numOf((m[2] || '1').replace(/^(half) a$/, '$1').replace(/^a (quarter|dozen|hundred|thousand)$/, '$1'));
+    if (to && from && n != null) return convertUnits(n, from, to);
+  }
+  // "5 miles to km", "a mile in feet", "convert 60 mph to km/h", "10 kg = lbs"
+  if ((m = t.match(new RegExp('(?:^|\\s)' + N + '\\s*' + UN + '\\s+(?:to|in|into|=|equals?|is how many|in how many|as)\\s+' + UN + '(?=\\s|$)', 'i')))) {
+    const n = numOf(m[1].replace(/^(half) a$/, '$1').replace(/^a (quarter|dozen|hundred|thousand)$/, '$1')), from = unitKey(m[2]), to = unitKey(m[3]);
+    if (from && to && n != null) return convertUnits(n, from, to);
+  }
+  // temperature, incl. kelvin
+  if ((m = t.match(/(-?\d+(?:\.\d+)?)\s*(?:°|degrees?)?\s*(f|fahrenheit|c|celsius|centigrade|k|kelvin)\b.*?\b(?:to|in|into)\s*(?:°|degrees?)?\s*(f|fahrenheit|c|celsius|k|kelvin)\b/))) {
+    const v = +m[1], f = m[2][0], to = m[3][0]; if (f === to) return null;
+    const c = f === 'f' ? (v - 32) * 5 / 9 : f === 'k' ? v - 273.15 : v, r = to === 'f' ? c * 9 / 5 + 32 : to === 'k' ? c + 273.15 : c;
+    const L = x => x === 'k' ? ' K' : '°' + x.toUpperCase();
+    return `${v}${L(f)} = **${fmtNum(Math.round(r * 10) / 10)}${L(to)}**`;
+  }
+  return null;
+}
+// tips and simple money math: "20% tip on 45", "what's 15% off 80", "split 120 between 4"
+function moneyAnswer(text) {
+  const t = text.toLowerCase().replace(/[$,?]/g, '').trim(); let m;
+  if ((m = t.match(/(\d+(?:\.\d+)?)\s*(?:%|percent)\s+tip\s+(?:on|for|of)\s+(\d+(?:\.\d+)?)/)) || (m = t.match(/tip\s+(?:on|for)\s+(\d+(?:\.\d+)?)\s+(?:at|with)\s+(\d+(?:\.\d+)?)\s*(?:%|percent)/))) {
+    const [p, b] = /tip\s+(?:on|for)/.test(m[0]) && !/^\d/.test(m[0]) ? [+m[2], +m[1]] : [+m[1], +m[2]];
+    const tip = b * p / 100; return `${p}% tip on $${fmtNum(b)} = **$${tip.toFixed(2)}** (total **$${(b + tip).toFixed(2)}**)`;
+  }
+  if ((m = t.match(/(\d+(?:\.\d+)?)\s*(?:%|percent)\s+off\s+(?:of\s+)?(\d+(?:\.\d+)?)/))) { const p = +m[1], b = +m[2]; return `${p}% off $${fmtNum(b)} = **$${(b * (1 - p / 100)).toFixed(2)}** (you save $${(b * p / 100).toFixed(2)})`; }
+  if ((m = t.match(/split\s+(\d+(?:\.\d+)?)\s+(?:between|among|by|with|for)\s+(\d+)/))) { const b = +m[1], n = +m[2]; if (n > 0) return `$${fmtNum(b)} split ${n} ways = **$${(b / n).toFixed(2)} each**`; }
+  if ((m = t.match(/(\d+(?:\.\d+)?)\s+is\s+what\s+(?:%|percent)\s+of\s+(\d+(?:\.\d+)?)/))) { const a = +m[1], b = +m[2]; if (b) return `${fmtNum(a)} is **${prettyNum(a / b * 100)}%** of ${fmtNum(b)}`; }
+  return null;
+}
 function quickMath(text) {
-  const conv = quickConvert(text); if (conv) return conv;
+  const conv = unitAnswer(text) || moneyAnswer(text) || quickConvert(text); if (conv) return conv;
   let t = text.toLowerCase().replace(/,(?=\d{3})/g, '').replace(/[?!=]+/g, ' ').trim();
   t = t.replace(/^(yo|hey|bro|omega|ok|okay)[, ]+/g, '').replace(/^(what'?s|whats|what is|how much is|calculate|calc|compute|solve)\s+/, '').replace(/\s+(equal|equals|be)$/, '');
   const pct = t.match(/^(\d+(?:\.\d+)?)\s*(?:%|percent)\s+of\s+(\d+(?:\.\d+)?)$/);
@@ -654,6 +711,154 @@ async function standaloneQuery(text, ui) {
   return q;
 }
 const SOCIAL = /\b(instagram|insta|ig|tiktok|tik tok|twitter|x\.com|threads|facebook|fb|snapchat|snap|youtube channel|twitch)\b/i;
+// ================= PLUG-INS AND CONNECTORS =================
+// Plug-ins: free services OMEGA can use (one tap to add). Connectors: MCP servers (the same kind Claude uses).
+// Your own plug-in: any web address that answers with text or JSON, with {q} where the search words go.
+const plugSettings = () => { settings.plugins = settings.plugins || {}; settings.plugins.on = settings.plugins.on || PLUGINS.map(p => p.id); /* the free plug-ins start switched on */ settings.plugins.custom = settings.plugins.custom || []; settings.plugins.conn = settings.plugins.conn || []; settings.toolsOff = settings.toolsOff || {}; return settings.plugins; };
+const plugSave = () => store.set('settings', settings);
+const htmlText = s => String(s || '').replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
+const afterWord = (t, re) => { const m = t.match(re); return m ? m[m.length - 1].trim().replace(/[?.!]+$/, '') : ''; };
+const BUILTINS = [
+  ['web', '🔎', 'Web search', 'Searches the internet for current info'], ['news', '📰', 'News', 'Latest headlines'], ['weather', '🌤', 'Weather', 'Forecasts for your city or anywhere'],
+  ['sports', '🏟', 'Sports scores', 'Live ESPN scores and schedules'], ['stocks', '📈', 'Stocks', 'Live stock prices'], ['crypto', '🪙', 'Crypto', 'Live coin prices'],
+  ['currency', '💱', 'Currency', 'Exchange rates'], ['time', '🕒', 'World clock', 'Time anywhere'], ['read', '🔗', 'Read links', 'Reads web pages you paste'],
+];
+const toolOn = name => { plugSettings(); return !settings.toolsOff[name]; };
+const PLUGINS = [
+  { id: 'dictionary', icon: '📖', name: 'Dictionary', desc: 'Definitions, how words are said, and examples', when: /\b(define|definition of|meaning of|what does [\w'-]+ mean|what is the meaning|how do you (say|pronounce))\b/i,
+    run: async t => { const w = (afterWord(t, /(?:define|definition of|meaning of|pronounce)\s+(?:the word\s+)?["']?([\w'-]+)/i) || afterWord(t, /what does\s+["']?([\w'-]+)["']?\s+mean/i)).toLowerCase(); if (!w) throw new Error('no word'); const d = await fetchT('https://api.dictionaryapi.dev/api/v2/entries/en/' + encodeURIComponent(w)); const e = d[0]; const lines = [`${e.word}${e.phonetic ? ' ' + e.phonetic : ''}`]; for (const m of e.meanings.slice(0, 3)) for (const x of m.definitions.slice(0, 2)) lines.push(`(${m.partOfSpeech}) ${x.definition}${x.example ? ' Example: "' + x.example + '"' : ''}`); const syn = [...new Set(e.meanings.flatMap(m => m.synonyms || []))].slice(0, 6); if (syn.length) lines.push('Similar words: ' + syn.join(', ')); return { label: 'Dictionary', text: 'DICTIONARY:\n' + lines.join('\n'), sources: [{ title: 'Free Dictionary', url: 'https://dictionaryapi.dev/' }] }; } },
+  { id: 'words', icon: '🔤', name: 'Rhymes and synonyms', desc: 'Words that rhyme, other ways to say something (great for lyrics and captions)', when: /\b(rhymes? with|words? that rhyme|synonyms? (for|of)|another word for|other words for|antonyms? (for|of)|opposite of)\b/i,
+    run: async t => { const w = afterWord(t, /(?:rhymes? with|rhyme with|synonyms? (?:for|of)|another word for|other words for|antonyms? (?:for|of)|opposite of)\s+["']?([\w' -]+?)["']?(?:\s|$)/i).split(' ')[0]; if (!w) throw new Error('no word'); const kind = /rhym/i.test(t) ? 'rel_rhy' : /antonym|opposite/i.test(t) ? 'rel_ant' : 'ml'; const d = await fetchT(`https://api.datamuse.com/words?${kind}=${encodeURIComponent(w)}&max=30`); const list = d.map(x => x.word).slice(0, 30); if (!list.length) throw new Error('none'); return { label: 'Words', text: `${kind === 'rel_rhy' ? 'WORDS THAT RHYME WITH' : kind === 'rel_ant' ? 'OPPOSITES OF' : 'SIMILAR WORDS TO'} "${w}" (Datamuse): ${list.join(', ')}`, sources: [{ title: 'Datamuse', url: 'https://www.datamuse.com/api/' }] }; } },
+  { id: 'recipes', icon: '🍳', name: 'Recipes', desc: 'Real recipes with ingredients and steps', when: /\b(recipe|recipes|how (do i|to|can i) (make|cook|bake)|ingredients (for|in))\b/i,
+    run: async t => { const q = afterWord(t, /(?:recipe for|recipes? for|make|cook|bake|ingredients (?:for|in))\s+(?:a |an |some |the )?([\w ]{2,40})/i).split(' ').slice(0, 3).join(' ') || cleanQuery(t); const d = await fetchT('https://www.themealdb.com/api/json/v1/1/search.php?s=' + encodeURIComponent(q)); const m = d.meals && d.meals[0]; if (!m) throw new Error('no recipe found'); const ing = []; for (let i = 1; i <= 20; i++) { const x = (m['strIngredient' + i] || '').trim(); if (x) ing.push(`${(m['strMeasure' + i] || '').trim()} ${x}`.trim()); } return { label: 'Recipe', text: `RECIPE: ${m.strMeal} (${m.strArea || ''} ${m.strCategory || ''})\nIngredients: ${ing.join('; ')}\nSteps: ${clip(m.strInstructions, 1800)}`, sources: [{ title: 'TheMealDB: ' + m.strMeal, url: m.strSource || 'https://www.themealdb.com/' }] }; } },
+  { id: 'books', icon: '📚', name: 'Books', desc: 'Find books, authors and when they came out', when: /\b(books? (by|about|like|on)|novels? (by|about)|who wrote|author of|good books?|book called)\b/i,
+    run: async t => { const q = cleanQuery(t).replace(/\b(books?|novels?|by|about|who wrote|author of|good|book called|recommend|me|some|the)\b/gi, ' ').replace(/\s+/g, ' ').trim() || cleanQuery(t); const d = await fetchT(`https://openlibrary.org/search.json?q=${encodeURIComponent(q)}&limit=6&fields=title,author_name,first_publish_year,key`); const rows = (d.docs || []).map(b => `${b.title} by ${(b.author_name || ['?']).slice(0, 2).join(', ')}${b.first_publish_year ? ' (' + b.first_publish_year + ')' : ''}`); if (!rows.length) throw new Error('no books'); return { label: 'Books', text: 'BOOKS (Open Library):\n' + rows.join('\n'), sources: [{ title: 'Open Library', url: 'https://openlibrary.org/search?q=' + encodeURIComponent(q) }] }; } },
+  { id: 'tv', icon: '📺', name: 'TV shows', desc: 'Shows, when they air, seasons and where', when: /\b(tv show|tv series|show called|series called|seasons? of|episodes? of|new season|when does .+ (come out|air|return))\b/i,
+    run: async t => { const q = cleanQuery(t).replace(/\b(tv|show|series|called|seasons?|episodes?|of|new|when|does|come out|air|return|is|the|how many|there)\b/gi, ' ').replace(/\s+/g, ' ').trim(); const d = await fetchT('https://api.tvmaze.com/search/shows?q=' + encodeURIComponent(q || t)); const s = d[0] && d[0].show; if (!s) throw new Error('no show'); return { label: 'TV', text: `TV SHOW (TVmaze): ${s.name}. Status: ${s.status}. Premiered: ${s.premiered || '?'}${s.ended ? ', ended ' + s.ended : ''}. Network: ${(s.network || s.webChannel || {}).name || '?'}. Rating: ${(s.rating || {}).average || '?'}. ${clip(htmlText(s.summary), 600)}`, sources: [{ title: 'TVmaze: ' + s.name, url: s.url }] }; } },
+  { id: 'music', icon: '🎵', name: 'Music', desc: 'Songs, albums and release dates (Apple Music catalog)', when: /\b(songs? by|albums? by|new (song|album) (by|from)|discography|when did .+ (drop|release)|latest (song|album))\b/i,
+    run: async t => { const q = cleanQuery(t).replace(/\b(songs?|albums?|by|new|from|latest|discography|when|did|drop|release|released|the|what|is|are)\b/gi, ' ').replace(/\s+/g, ' ').trim(); const ent = /album/i.test(t) ? 'album' : 'song'; const d = await fetchT(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=${ent}&limit=10`); const rows = (d.results || []).sort((a, b) => (b.releaseDate || '').localeCompare(a.releaseDate || '')).slice(0, 8).map(x => `${x.trackName || x.collectionName} by ${x.artistName} (${(x.releaseDate || '').slice(0, 10)})`); if (!rows.length) throw new Error('nothing found'); return { label: 'Music', text: `MUSIC (Apple catalog, newest first):\n${rows.join('\n')}`, sources: [{ title: 'Apple Music', url: 'https://music.apple.com/search?term=' + encodeURIComponent(q) }] }; } },
+  { id: 'quakes', icon: '🌎', name: 'Earthquakes', desc: 'Recent earthquakes worldwide (USGS)', when: /\bearthquakes?\b|\bquake\b/i,
+    run: async () => { const d = await fetchT('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson'); const rows = d.features.slice(0, 10).map(f => `M${f.properties.mag} ${f.properties.place} (${new Date(f.properties.time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})`); return { label: 'Earthquakes', text: 'EARTHQUAKES IN THE LAST DAY (USGS, newest first):\n' + rows.join('\n'), sources: [{ title: 'USGS', url: 'https://earthquake.usgs.gov/earthquakes/map/' }] }; } },
+  { id: 'holidays', icon: '🎉', name: 'Holidays', desc: 'US holidays coming up', when: /\b(holiday|holidays|day off|federal holiday|bank holiday)\b/i,
+    run: async () => { const y = new Date().getFullYear(); const [a, b] = await Promise.all([fetchT(`https://date.nager.at/api/v3/PublicHolidays/${y}/US`), fetchT(`https://date.nager.at/api/v3/PublicHolidays/${y + 1}/US`).catch(() => [])]); const today = new Date().toISOString().slice(0, 10); const rows = [...a, ...b].filter(h => h.date >= today).slice(0, 8).map(h => `${h.date}: ${h.localName}`); return { label: 'Holidays', text: 'UPCOMING US HOLIDAYS:\n' + rows.join('\n'), sources: [{ title: 'Nager.Date', url: 'https://date.nager.at/' }] }; } },
+  { id: 'air', icon: '😷', name: 'Air quality', desc: 'Air quality (AQI) for your city', when: /\b(air quality|aqi|smog|pollution|smoke)\b/i,
+    run: async t => { const place = placeFrom(t) || profile.city || 'Los Angeles'; const p = await geocode(place); const d = await fetchT(`https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${p.latitude}&longitude=${p.longitude}&current=us_aqi,pm2_5,pm10,ozone`); const c = d.current; const lvl = c.us_aqi <= 50 ? 'Good' : c.us_aqi <= 100 ? 'Moderate' : c.us_aqi <= 150 ? 'Unhealthy for sensitive groups' : c.us_aqi <= 200 ? 'Unhealthy' : 'Very unhealthy'; return { label: 'Air quality', plain: `😷 Air quality in ${p.name}: AQI ${c.us_aqi} (${lvl})`, text: `AIR QUALITY in ${p.name}, ${p.admin1 || ''} (Open-Meteo, now): US AQI ${c.us_aqi} (${lvl}), PM2.5 ${c.pm2_5}, PM10 ${c.pm10}, ozone ${c.ozone}`, sources: [{ title: 'Open-Meteo Air Quality', url: 'https://open-meteo.com/en/docs/air-quality-api' }] }; } },
+  { id: 'pokemon', icon: '⚡', name: 'Pokémon', desc: 'Pokémon stats, types and abilities', when: /\bpok[eé]mon\b/i,
+    run: async t => { const w = (afterWord(t, /pok[eé]mon\s+(?:called|named)?\s*([a-z-]+)/i) || afterWord(t, /\b([a-z-]+)\s+pok[eé]mon/i)).toLowerCase(); const d = await fetchT('https://pokeapi.co/api/v2/pokemon/' + encodeURIComponent(w)); return { label: 'Pokémon', text: `POKEMON ${d.name}: types ${d.types.map(x => x.type.name).join('/')}; abilities ${d.abilities.map(x => x.ability.name).join(', ')}; stats ${d.stats.map(s => s.stat.name + ' ' + s.base_stat).join(', ')}; height ${d.height / 10} m, weight ${d.weight / 10} kg`, sources: [{ title: 'PokéAPI', url: 'https://pokeapi.co/' }] }; } },
+  { id: 'hn', icon: '🧑‍💻', name: 'Tech news', desc: 'Top stories on Hacker News', when: /\b(hacker news|tech news|startup news|what'?s new in tech)\b/i,
+    run: async () => { const ids = (await fetchT('https://hacker-news.firebaseio.com/v0/topstories.json')).slice(0, 8); const its = await Promise.all(ids.map(i => fetchT(`https://hacker-news.firebaseio.com/v0/item/${i}.json`).catch(() => null))); const rows = its.filter(Boolean).map(x => `${x.title} (${x.score} points)`); return { label: 'Tech news', text: 'TOP TECH STORIES NOW (Hacker News):\n' + rows.join('\n'), sources: [{ title: 'Hacker News', url: 'https://news.ycombinator.com/' }] }; } },
+];
+const CONNECTOR_CATALOG = [
+  { name: 'DeepWiki', icon: '🐙', url: 'https://mcp.deepwiki.com/mcp', desc: 'Ask questions about any GitHub project (how its code works)' },
+  { name: 'Context7', icon: '📘', url: 'https://mcp.context7.com/mcp', desc: 'Up-to-date docs and code examples for coding libraries' },
+];
+// ---- connectors: talk to MCP servers over the internet (JSON-RPC) ----
+let mcpId = 0; const mcpSid = {};
+async function mcpRPC(c, method, params, notify) {
+  const h = { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', 'MCP-Protocol-Version': '2025-06-18' };
+  if (c.token) h.Authorization = 'Bearer ' + c.token;
+  if (mcpSid[c.id]) h['Mcp-Session-Id'] = mcpSid[c.id];
+  const body = notify ? { jsonrpc: '2.0', method, params } : { jsonrpc: '2.0', id: ++mcpId, method, params };
+  const ctl = new AbortController(), tm = setTimeout(() => ctl.abort(), 30000);
+  try {
+    const r = await fetch(c.url, { method: 'POST', headers: h, body: JSON.stringify(body), signal: ctl.signal });
+    const sid = r.headers.get('mcp-session-id'); if (sid) mcpSid[c.id] = sid;
+    if (notify) return null;
+    if (r.status === 401 || r.status === 403) throw new Error('this connector needs a key (paste a token)');
+    if (!r.ok) throw Object.assign(new Error('connector error ' + r.status), { status: r.status });
+    const ct = r.headers.get('content-type') || ''; let msg = null;
+    if (ct.includes('event-stream')) { for (const line of (await r.text()).split('\n')) if (line.startsWith('data:')) { try { const j = JSON.parse(line.slice(5)); if (j.id === body.id) msg = j; } catch (_) { } } }
+    else msg = await r.json();
+    if (!msg) throw new Error('the connector did not answer');
+    if (msg.error) throw new Error(msg.error.message || 'connector error');
+    return msg.result;
+  } catch (e) { if (e.name === 'AbortError') throw new Error('the connector took too long'); if (e instanceof TypeError) throw new Error("couldn't reach it (it may not allow apps in a browser)"); throw e; }
+  finally { clearTimeout(tm); }
+}
+async function mcpConnect(c) {
+  delete mcpSid[c.id];
+  await mcpRPC(c, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'OMEGA', version: VERSION } });
+  await mcpRPC(c, 'notifications/initialized', {}, true).catch(() => { });
+  const r = await mcpRPC(c, 'tools/list', {});
+  c.tools = (r.tools || []).slice(0, 40).map(t => ({ name: t.name, description: clip(t.description || '', 400), schema: t.inputSchema || {} }));
+  c.ok = Date.now(); return c;
+}
+async function mcpCall(c, name, args) {
+  if (!mcpSid[c.id]) await mcpConnect(c);
+  let r;
+  try { r = await mcpRPC(c, 'tools/call', { name, arguments: args || {} }); }
+  catch (e) { if (e.status === 400 || e.status === 404 || /session/i.test(e.message)) { await mcpConnect(c); r = await mcpRPC(c, 'tools/call', { name, arguments: args || {} }); } else throw e; }
+  const out = (r.content || []).map(p => p.type === 'text' ? p.text : p.type === 'resource' && p.resource ? p.resource.text || '' : '').join('\n');
+  if (r.isError) throw new Error(clip(out || 'the tool failed', 120));
+  return out;
+}
+const shortSchema = s => { const p = (s && s.properties) || {}; const o = {}; for (const [k, v] of Object.entries(p).slice(0, 8)) o[k] = clip((v.type || 'any') + (v.description ? ': ' + v.description : ''), 90); return { args: o, required: (s && s.required) || [] }; };
+// ---- your own plug-ins: a web address with {q} ----
+async function runCustom(p, q) {
+  const url = p.url.replace(/\{q\}/g, encodeURIComponent(q)); const raw = await fetchT(url, { type: 'text', ms: 12000 });
+  let text = raw; try { text = JSON.stringify(JSON.parse(raw)).slice(0, 4000); } catch (_) { text = clip(htmlText(raw), 4000); }
+  return { label: p.name, text: `${p.name.toUpperCase()} (your plug-in, from ${new URL(url).hostname}):\n${text}`, sources: [{ title: p.name, url }] };
+}
+// ---- deciding which plug-ins to use for a message ----
+// built-in plug-ins: fast word matching. Your own plug-ins and connectors: the cloud brain picks (one quick call).
+function catalogTools(text, qtext) {
+  const P = plugSettings();
+  return PLUGINS.filter(p => P.on.includes(p.id) && (p.when.test(text) || p.when.test(qtext))).map(p => { const use = p.when.test(text) ? text : qtext; return ['plug:' + p.id, () => p.run(use), `${p.icon} Using ${p.name}`]; });
+}
+async function routedTools(text, qtext, ui) {
+  const P = plugSettings(), cands = [];
+  for (const p of P.custom) cands.push({ id: 'p:' + p.id, label: p.name, line: `${p.name}: ${p.desc || 'no description'} | args {"q":"search words"}`, run: a => runCustom(p, a.q || cleanQuery(qtext)) });
+  for (const c of P.conn) for (const t of (c.tools || [])) cands.push({ id: `c:${c.id}:${t.name}`, label: `${c.name} (${t.name})`, line: `${c.name} → ${t.name}: ${t.description} | ${JSON.stringify(shortSchema(t.schema))}`, run: async a => ({ label: c.name, text: `${c.name.toUpperCase()} CONNECTOR, tool ${t.name}:\n` + clip(await mcpCall(c, t.name, a), 6000), sources: [{ title: c.name, url: c.url.replace(/\/mcp\/?$/, '') }] }) });
+  if (!cands.length) return [];
+  if (!cloudOn()) { // no cloud brain: only your own plug-ins, when their name is in the message
+    return cands.filter(c => c.id.startsWith('p:') && new RegExp('\\b' + c.label.split(/\s+/)[0].replace(/[^\w]/g, '') + '\\b', 'i').test(text)).slice(0, 2).map(c => [c.id, () => c.run({ q: cleanQuery(qtext) }), `🧩 Using ${c.label}`]);
+  }
+  const sys = 'You decide which of the user\'s tools (if any) would really help answer their latest message. Only pick a tool when it clearly fits; most messages need none. Fill in the args from the message.\nTools (id | what it does | args):\n' + cands.map((c, i) => `${i + 1}. ${c.id} | ${c.line}`).join('\n') + '\nReply with JSON only: {"calls":[{"id":"...","args":{}}]} with at most 2 calls, or {"calls":[]}';
+  const prev = prevUserText();
+  const o = { maxTokens: 300, temperature: 0, bg: true, onText: () => { } };
+  let out = '';
+  try { out = await Promise.race([cloudChat([{ role: 'system', content: sys }, { role: 'user', content: (prev ? `(Earlier: ${clip(prev, 200)})\n` : '') + clip(text, 1200) }], o), sleep(12000).then(() => '')]); } catch (_) { return []; }
+  const j = thinkStrip(out || '').match(/\{[\s\S]*\}/); if (!j) return [];
+  let r; try { r = JSON.parse(j[0]); } catch (_) { return []; }
+  return (Array.isArray(r.calls) ? r.calls : []).slice(0, 2).map(x => { const c = cands.find(c => c.id === x.id); return c ? [c.id, () => c.run(x.args && typeof x.args === 'object' ? x.args : {}), `🧩 Using ${c.label}`] : null; }).filter(Boolean);
+}
+// ---- the Plug-ins screen ----
+function renderPlugins() {
+  const P = plugSettings();
+  $('#plugBuiltin').innerHTML = BUILTINS.map(([k, ic, n, d]) => `<label class="plugrow"><span class="pic">${ic}</span><span class="ptx"><b>${esc(n)}</b><span>${esc(d)}</span></span><input type="checkbox" data-tool="${k}" ${settings.toolsOff[k] ? '' : 'checked'}></label>`).join('');
+  $('#plugCatalog').innerHTML = PLUGINS.map(p => { const on = P.on.includes(p.id); return `<div class="plugrow"><span class="pic">${p.icon}</span><span class="ptx"><b>${esc(p.name)}</b><span>${esc(p.desc)}</span></span><button type="button" class="${on ? '' : 'primary'}" data-plug="${p.id}">${on ? 'Added ✓' : 'Add'}</button></div>`; }).join('');
+  $('#plugCustom').innerHTML = P.custom.map((p, i) => `<div class="plugrow"><span class="pic">🧩</span><span class="ptx"><b>${esc(p.name)}</b><span>${esc(clip(p.desc || p.url, 90))}</span></span><button type="button" data-delcustom="${i}">Remove</button></div>`).join('') || '<p class="hint">None yet.</p>';
+  $('#connList').innerHTML = P.conn.map((c, i) => `<div class="plugrow"><span class="pic">🔌</span><span class="ptx"><b>${esc(c.name)}</b><span>${c.tools && c.tools.length ? `${c.tools.length} tools: ${esc(clip(c.tools.map(t => t.name).join(', '), 90))}` : 'Not connected yet'}${c.err ? ' · ⚠️ ' + esc(clip(c.err, 60)) : ''}</span></span><span class="keybtns"><button type="button" data-reconn="${i}">Refresh</button><button type="button" data-delconn="${i}">Remove</button></span></div>`).join('') || '<p class="hint">None yet.</p>';
+  $('#connCatalog').innerHTML = CONNECTOR_CATALOG.map((c, i) => { const has = P.conn.some(x => x.url === c.url); return `<div class="plugrow"><span class="pic">${c.icon}</span><span class="ptx"><b>${esc(c.name)}</b><span>${esc(c.desc)}</span></span><button type="button" class="${has ? '' : 'primary'}" data-addconn="${i}" ${has ? 'disabled' : ''}>${has ? 'Added ✓' : 'Add'}</button></div>`; }).join('');
+  $('#plugCount').textContent = P.on.length + P.custom.length + P.conn.length ? `${P.on.length + P.custom.length + P.conn.length} added` : '';
+}
+async function addConnector(c, msgEl) {
+  const P = plugSettings();
+  const item = { id: 'c' + Date.now().toString(36), name: c.name || new URL(c.url).hostname, url: c.url, token: c.token || '', tools: [] };
+  msgEl.textContent = `Connecting to ${item.name}…`;
+  try { await mcpConnect(item); item.err = ''; P.conn.push(item); plugSave(); msgEl.textContent = `✅ Connected to ${item.name}: ${item.tools.length} tools. Just ask OMEGA and it will use them when they fit.`; }
+  catch (e) { msgEl.textContent = `Couldn't connect to ${item.name}: ${e.message}`; }
+  renderPlugins();
+}
+function wirePlugins() {
+  $('#openPlug').onclick = () => { openSheet('#plugSheet'); renderPlugins(); };
+  $('#plugBuiltin').onchange = e => { const k = e.target.dataset.tool; if (!k) return; settings.toolsOff[k] = !e.target.checked; plugSave(); };
+  $('#plugCatalog').onclick = e => { const b = e.target.closest('[data-plug]'); if (!b) return; const P = plugSettings(), id = b.dataset.plug; P.on = P.on.includes(id) ? P.on.filter(x => x !== id) : [...P.on, id]; plugSave(); renderPlugins(); };
+  $('#plugCustom').onclick = e => { const b = e.target.closest('[data-delcustom]'); if (!b) return; plugSettings().custom.splice(+b.dataset.delcustom, 1); plugSave(); renderPlugins(); };
+  $('#addCustom').onclick = () => {
+    const name = $('#cName').value.trim(), url = $('#cUrl').value.trim(), desc = $('#cDesc').value.trim();
+    if (!name || !/^https:\/\//i.test(url)) { $('#customMsg').textContent = 'Give it a name and a web address starting with https://'; return; }
+    plugSettings().custom.push({ id: 'p' + Date.now().toString(36), name: name.slice(0, 40), url: /\{q\}/.test(url) ? url : url + (url.includes('?') ? '&' : '?') + 'q={q}', desc: desc.slice(0, 200) });
+    plugSave(); $('#cName').value = $('#cUrl').value = $('#cDesc').value = ''; $('#customMsg').textContent = `✅ Added ${name}. OMEGA will use it when your message fits "${clip(desc || name, 60)}".`; renderPlugins();
+  };
+  $('#connCatalog').onclick = e => { const b = e.target.closest('[data-addconn]'); if (b) addConnector(CONNECTOR_CATALOG[+b.dataset.addconn], $('#connMsg')); };
+  $('#addConn').onclick = () => { const url = $('#connUrl').value.trim(); if (!/^https:\/\//i.test(url)) { $('#connMsg').textContent = 'Paste the connector address (it starts with https://)'; return; } addConnector({ name: $('#connName').value.trim(), url, token: $('#connToken').value.trim() }, $('#connMsg')).then(() => { $('#connUrl').value = $('#connName').value = $('#connToken').value = ''; }); };
+  $('#connList').onclick = async e => {
+    const P = plugSettings(), d = e.target.closest('[data-delconn]'), r = e.target.closest('[data-reconn]');
+    if (d) { P.conn.splice(+d.dataset.delconn, 1); plugSave(); renderPlugins(); return; }
+    if (r) { const c = P.conn[+r.dataset.reconn]; $('#connMsg').textContent = `Refreshing ${c.name}…`; try { await mcpConnect(c); c.err = ''; $('#connMsg').textContent = `✅ ${c.name}: ${c.tools.length} tools`; } catch (err) { c.err = err.message; $('#connMsg').textContent = `${c.name}: ${err.message}`; } plugSave(); renderPlugins(); }
+  };
+}
 function decideTools(text) {
   const t = text.toLowerCase(), tools = [];
   const url = ((text.match(/https?:\/\/[^\s)<>"']+/) || [])[0] || '').replace(/[.,!?;:]+$/, '');
@@ -1747,7 +1952,7 @@ async function send(opts = {}) {
     if (/^(what'?s|whats|what is|what was|what'?s|do you know|do you remember|remember|you remember|tell me)\s+my name\b|^who am i\b|\bwhat(?:'?s| is| was) my name\b/i.test(text) && profile.name) { turn.text = `Your name is ${profile.name}.`; render(ui.ans, turn.text); return; }
     // "what can you do?": a real list of OMEGA's abilities (the brain itself doesn't know them)
     if (!att && /^(?:yo |hey |so |ok |omega,? )*(?:what can (?:you|omega) do|what (?:are|r) (?:your|omega'?s) (?:features|abilities|skills)|what do you do|how do i use (?:you|omega|this)|help|what can i (?:ask|do with) (?:you|omega|this))\??$/i.test(text.trim())) {
-      turn.text = `Here's what I can do for you:\n\n- **Chat and advice**: ask me anything. Online I use a big free cloud brain; offline, the brain on your phone.\n- **Live info**: weather, news, sports scores (\"did the Lakers win?\"), stock prices, crypto, currency, the time anywhere, web search.\n- **Deep research**: start with \"research…\" and I search several times, read the pages and write a report with sources.\n- **Build apps and games**: tap **Code**, then say what to make. I test it myself and fix bugs I find. Or say \"play snake\" for a ready game.\n- **Edit videos**: attach a video and say \"cut the first 3 seconds\", \"make it vertical\", \"add captions\", \"speed it up\", \"merge these\", \"make a GIF\", or \"transcribe it\".\n- **Photos**: attach one and ask about it, or turn photos into a slideshow video.\n- **Pictures**: \"draw a lowrider at sunset\".\n- **Files**: attach a PDF or text file and ask about it.\n- **Memory**: I remember what you tell me about yourself. Tap 👎 to teach me.\n- **Voice**: tap the 🎤 and talk; I read answers out loud.`;
+      turn.text = `Here's what I can do for you:\n\n- **Chat and advice**: ask me anything. Online I use a big free cloud brain; offline, the brain on your phone.\n- **Plug-ins and connectors**: open the menu → 🧩 Plug-ins to add more (dictionary, recipes, music, books, TV, earthquakes, your own web services, and MCP connectors like DeepWiki).\n- **Live info**: weather, news, sports scores (\"did the Lakers win?\"), stock prices, crypto, currency, the time anywhere, web search.\n- **Deep research**: start with \"research…\" and I search several times, read the pages and write a report with sources.\n- **Build apps and games**: tap **Code**, then say what to make. I test it myself and fix bugs I find. Or say \"play snake\" for a ready game.\n- **Edit videos**: attach a video and say \"cut the first 3 seconds\", \"make it vertical\", \"add captions\", \"speed it up\", \"merge these\", \"make a GIF\", or \"transcribe it\".\n- **Photos**: attach one and ask about it, or turn photos into a slideshow video.\n- **Pictures**: \"draw a lowrider at sunset\".\n- **Files**: attach a PDF or text file and ask about it.\n- **Memory**: I remember what you tell me about yourself. Tap 👎 to teach me.\n- **Voice**: tap the 🎤 and talk; I read answers out loud.`;
       render(ui.ans, turn.text); return;
     }
     const pic = att ? null : pictureRequest(text);
@@ -1756,17 +1961,23 @@ async function send(opts = {}) {
     if (math) { turn.text = math; render(ui.ans, turn.text); return; } // exact, instant, no brain needed
     // live info first, so OMEGA can still help even if the brain can't start
     let live = '', liveShown = '';
-    if (settings.live && !rem) {
+    const P0 = plugSettings(), anyPlug = P0.on.length + P0.custom.length + P0.conn.length > 0;
+    if ((settings.live || anyPlug) && !rem) {
       const aboutPast = /\b(you (said|told|gave|suggested|recommended|made|wrote|showed)( me)?|did you (say|tell|give|suggest|recommend|make|write|show)|we (talked|discussed|said|decided|planned|were talking)|(in|from) (the|our|another|other|that|my) (old |last )?(chat|convo|conversation)|last time (we|you|i))\b/i.test(text) && chats.length > 1; // about our old chats, not the internet
       let qtext = text;
       if (navigator.onLine !== false && !att && !aboutPast && isFollowUp(text)) { ui.work.hidden = false; ui.wt.textContent = 'Working out what you mean…'; qtext = await standaloneQuery(text, ui); }
-      const tools = navigator.onLine === false || att || aboutPast ? [] : decideTools(qtext); // no internet (or a file to read): skip live info
+      const offlineish = navigator.onLine === false || att || aboutPast; // no internet (or a file to read): skip live info
+      const tools = offlineish || !settings.live ? [] : decideTools(qtext).filter(t => toolOn(t[0]));
+      if (!offlineish && anyPlug) {
+        tools.push(...catalogTools(text, qtext));
+        if (P0.custom.length || P0.conn.length) { ui.work.hidden = false; ui.wt.textContent = '🧩 Checking your plug-ins…'; const rt = await routedTools(text, qtext, ui); tools.push(...rt); }
+      }
       if (chat) chat.lastTopic = tools.length ? clip(cleanQuery(qtext), 120) : '';
       if (tools.length) {
         ui.work.hidden = false; ui.wt.textContent = 'Checking live info: ' + tools.map(t => t[0]).join(', ') + '…';
         const q40 = clip(cleanQuery(qtext) || qtext, 48);
         const STEP = { weather: '🌤 Checking the weather', news: `📰 Reading the latest news about "${q40}"`, web: `🔎 Searching the web for "${q40}"`, wiki: `📚 Looking up "${q40}"`, sports: '🏟 Checking live scores on ESPN', stocks: '📈 Checking live stock prices', crypto: '🪙 Checking crypto prices', currency: '💱 Checking exchange rates', time: '🕒 Checking the time', read: '📖 Reading the page you sent', research: `🔬 Researching "${q40}": 3 searches, then reading the top pages` };
-        tools.forEach(t => step(ui, STEP[t[0]] || `🔎 Looking up ${t[0]}`));
+        tools.forEach(t => step(ui, t[2] || STEP[t[0]] || `🔎 Looking up ${t[0]}`));
         const res = await Promise.allSettled(tools.map(t => t[1]()));
         const ok = res.filter(r => r.status === 'fulfilled').map(r => r.value);
         ok.forEach(r => turn.sources.push(...r.sources));
@@ -1976,7 +2187,7 @@ const closeSide = () => { side.classList.remove('open'); sideVeil.hidden = true;
 $('#menu').onclick = () => { side.classList.add('open'); sideVeil.hidden = false; };
 sideVeil.onclick = closeSide;
 function openSheet(id) { closeSide(); veil.hidden = false; $(id).hidden = false; if (id === '#setSheet') renderSettings(); }
-function closeSheets() { veil.hidden = true; ['#setSheet', '#memSheet', '#fbSheet'].forEach(s => $(s).hidden = true); }
+function closeSheets() { veil.hidden = true; ['#setSheet', '#memSheet', '#fbSheet', '#plugSheet'].forEach(s => $(s).hidden = true); }
 veil.onclick = closeSheets; document.querySelectorAll('[data-close]').forEach(b => b.onclick = closeSheets);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') { closePlayer(); closeSheets(); closeSide(); } });
 $('#openMem').onclick = () => openSheet('#memSheet'); $('#openSet').onclick = () => openSheet('#setSheet');
@@ -2144,7 +2355,7 @@ function applyTheme() {
 document.querySelectorAll('#themeSeg button').forEach(b => b.onclick = () => { settings.theme = b.dataset.theme; store.set('settings', settings); applyTheme(); });
 applyTheme();
 // ---------------- boot ----------------
-fillProfile(); renderFacts(); renderChats(); syncChips(); grow(); refreshWelcome();
+fillProfile(); renderFacts(); renderChats(); syncChips(); grow(); refreshWelcome(); wirePlugins();
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   navigator.serviceWorker.register('sw.js').catch(() => { });
   // the multi-core brain needs the page to be served by the offline helper: reload once when it first takes over (never mid-answer)
@@ -2158,4 +2369,4 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
 }
 // keep the downloaded brain from being cleared by the browser when storage is low
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => { });
-window.OMEGA = { selfTest, findTeam, toolSports, toolStock, stockSymbols, threads: () => ({ isolated: !!window.crossOriginIsolated, cores: navigator.hardwareConcurrency || 1, brainThreads: brainThreads() }), quickMath, decideTools, currencyPair, placeFrom, isClockQuestion, toolWeather, toolTime, toolNews, toolCrypto, toolCurrency, version: VERSION };
+window.OMEGA = { routedTools, catalogTools, unitAnswer, selfTest, findTeam, toolSports, toolStock, stockSymbols, threads: () => ({ isolated: !!window.crossOriginIsolated, cores: navigator.hardwareConcurrency || 1, brainThreads: brainThreads() }), quickMath, decideTools, currencyPair, placeFrom, isClockQuestion, toolWeather, toolTime, toolNews, toolCrypto, toolCurrency, version: VERSION };

@@ -13,7 +13,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-180.png">
-<link rel="stylesheet" href="style.css?v=39">
+<link rel="stylesheet" href="style.css?v=40">
 </head>
 <body>
 <div class="app" id="app">
@@ -24,6 +24,7 @@
     <div class="label">Recent</div>
     <div class="chats" id="chats"></div>
     <div class="foot">
+      <button class="navbtn" id="openPlug"><span style="width:18px;text-align:center">🧩</span> Plug-ins & connectors <span class="hint" id="plugCount" style="margin-left:auto"></span></button>
       <button class="navbtn" id="openMem"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>Memory and learning</button>
       <button class="navbtn" id="openSet"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Brain and settings</button>
     </div>
@@ -117,6 +118,28 @@
   <p class="hint">Exports your liked answers and corrections as a training file for the Kaggle notebook, so you can train a smarter OMEGA later.</p>
 </div>
 
+<div class="sheet" id="plugSheet" hidden role="dialog" aria-label="Plug-ins and connectors">
+  <div class="hd"><h2>Plug-ins & connectors</h2><button class="iconbtn" data-close aria-label="Close">✕</button></div>
+  <p class="hint">Plug-ins give OMEGA new skills. Add one and just ask normally: OMEGA uses it when your message fits, and the thinking box shows "🧩 Using …". Math, unit conversions, tips and discounts are built in and instant.</p>
+  <h3>Add plug-ins (free, no key)</h3>
+  <div id="plugCatalog" class="pluglist"></div>
+  <h3>Connectors (MCP)</h3>
+  <p class="hint">The same kind of connectors Claude uses. Some are ready to add; or paste any MCP server address (if it needs a key, paste its token too). Connectors work when the cloud brain is on, because it decides which tool to use.</p>
+  <div id="connCatalog" class="pluglist"></div>
+  <div id="connList" class="pluglist"></div>
+  <input type="text" id="connName" placeholder="Name (optional)"><input type="url" id="connUrl" placeholder="https://… /mcp address" autocomplete="off" spellcheck="false"><input type="password" id="connToken" placeholder="Token (only if it needs one)" autocomplete="off">
+  <div class="row"><button class="btn pri" id="addConn">Connect</button></div>
+  <p class="hint" id="connMsg"></p>
+  <h3>Your own plug-in</h3>
+  <p class="hint">Any web address that answers with text or JSON. Put {q} where the search words go, e.g. https://api.example.com/search?q={q}. Say when to use it so OMEGA knows.</p>
+  <input type="text" id="cName" placeholder="Name, e.g. Movie finder"><input type="text" id="cDesc" placeholder="When to use it, e.g. questions about movies and actors"><input type="url" id="cUrl" placeholder="https://…{q}" autocomplete="off" spellcheck="false">
+  <div class="row"><button class="btn" id="addCustom">Add plug-in</button></div>
+  <p class="hint" id="customMsg"></p>
+  <div id="plugCustom" class="pluglist"></div>
+  <h3>Built-in skills</h3>
+  <p class="hint">Turn off any you don't want OMEGA to use.</p>
+  <div id="plugBuiltin" class="pluglist"></div>
+</div>
 <div class="sheet" id="fbSheet" hidden role="dialog" aria-label="Teach OMEGA">
   <div class="hd"><h2>Teach OMEGA</h2><button class="iconbtn" data-close aria-label="Close">✕</button></div>
   <p class="hint">What should OMEGA have said, or what was wrong? It will remember this.</p>
@@ -124,7 +147,7 @@
   <div class="row"><button class="btn pri" id="fbSave">Save lesson</button></div>
 </div>
 
-<script src="video.js?v=39" defer></script>
-<script type="module" src="app.js?v=39"></script>
+<script src="video.js?v=40" defer></script>
+<script type="module" src="app.js?v=40"></script>
 </body>
 </html>
