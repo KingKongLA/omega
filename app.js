@@ -7,7 +7,7 @@ const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.89';
 const WLLAMA_URL = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/index.js';
 const WLLAMA_WASM = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/wasm/wllama.wasm';
 const PROXY = 'https://proxy.cors.dev/';
-const VERSION = '3.9.1';
+const VERSION = '3.10.0';
 
 const MODELS = [
   { key: 'cpu-qwen3-0.6b', engine: 'cpu', name: 'Qwen3 0.6B', repo: 'unsloth/Qwen3-0.6B-GGUF', file: 'Qwen3-0.6B-Q4_K_M.gguf', sizeMB: 400, memMB: 650, thinking: true, desc: 'Recommended for phones and tablets. Runs on the processor, so it does not crash.' },
@@ -714,7 +714,7 @@ const SOCIAL = /\b(instagram|insta|ig|tiktok|tik tok|twitter|x\.com|threads|face
 // ================= PLUG-INS AND CONNECTORS =================
 // Plug-ins: free services OMEGA can use (one tap to add). Connectors: MCP servers (the same kind Claude uses).
 // Your own plug-in: any web address that answers with text or JSON, with {q} where the search words go.
-const plugSettings = () => { settings.plugins = settings.plugins || {}; settings.plugins.on = settings.plugins.on || PLUGINS.map(p => p.id); /* the free plug-ins start switched on */ settings.plugins.custom = settings.plugins.custom || []; settings.plugins.conn = settings.plugins.conn || []; settings.toolsOff = settings.toolsOff || {}; return settings.plugins; };
+const plugSettings = () => { settings.plugins = settings.plugins || {}; settings.plugins.on = settings.plugins.on || PLUGINS.map(p => p.id); /* the free plug-ins start switched on */ settings.plugins.custom = settings.plugins.custom || []; settings.plugins.conn = settings.plugins.conn || [{ id: 'cexa', name: 'Exa', url: 'https://mcp.exa.ai/mcp', token: '', web: true, tools: [{ name: 'web_search_exa', description: 'web search', schema: {} }] }]; settings.toolsOff = settings.toolsOff || {}; return settings.plugins; };
 const plugSave = () => store.set('settings', settings);
 const htmlText = s => String(s || '').replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
 const afterWord = (t, re) => { const m = t.match(re); return m ? m[m.length - 1].trim().replace(/[?.!]+$/, '') : ''; };
@@ -748,10 +748,20 @@ const PLUGINS = [
   { id: 'hn', icon: '🧑‍💻', name: 'Tech news', desc: 'Top stories on Hacker News', when: /\b(hacker news|tech news|startup news|what'?s new in tech)\b/i,
     run: async () => { const ids = (await fetchT('https://hacker-news.firebaseio.com/v0/topstories.json')).slice(0, 8); const its = await Promise.all(ids.map(i => fetchT(`https://hacker-news.firebaseio.com/v0/item/${i}.json`).catch(() => null))); const rows = its.filter(Boolean).map(x => `${x.title} (${x.score} points)`); return { label: 'Tech news', text: 'TOP TECH STORIES NOW (Hacker News):\n' + rows.join('\n'), sources: [{ title: 'Hacker News', url: 'https://news.ycombinator.com/' }] }; } },
 ];
+// connectors: free ones connect with one tap; some need your own key (it stays on this phone)
 const CONNECTOR_CATALOG = [
+  { name: 'Exa', icon: '🔎', url: 'https://mcp.exa.ai/mcp', desc: 'Smart web search: OMEGA uses it with its own search for better, fresher results', web: true },
+  { name: 'Hugging Face', icon: '🤗', url: 'https://huggingface.co/mcp', desc: 'Find AI models, datasets and apps on Hugging Face (add your hf_ token for your account)' },
   { name: 'DeepWiki', icon: '🐙', url: 'https://mcp.deepwiki.com/mcp', desc: 'Ask questions about any GitHub project (how its code works)' },
   { name: 'Context7', icon: '📘', url: 'https://mcp.context7.com/mcp', desc: 'Up-to-date docs and code examples for coding libraries' },
+  { name: 'GitMCP', icon: '🧾', url: 'https://gitmcp.io/docs', desc: 'Docs and code from any public GitHub project' },
+  { name: 'Microsoft Learn', icon: '🪟', url: 'https://learn.microsoft.com/api/mcp', desc: 'Official Microsoft, Windows, Excel and Azure help' },
+  { name: 'Cloudflare Docs', icon: '☁️', url: 'https://docs.mcp.cloudflare.com/mcp', desc: 'Help with Cloudflare websites and hosting' },
+  { name: 'Firecrawl', icon: '🔥', url: 'https://mcp.firecrawl.dev/mcp', keyUrl: 'https://mcp.firecrawl.dev/v2/mcp', keyNote: 'Free a few times a day; for more, paste your Firecrawl key (firecrawl.dev)', desc: 'Reads and searches websites, even tricky pages' },
+  { name: 'Tavily', icon: '🧭', url: 'https://mcp.tavily.com/mcp/?tavilyApiKey={key}', needsKey: 'Paste your free Tavily key (tavily.com → API keys)', desc: 'Search made for AI: news, research and facts with sources' },
+  { name: 'Zapier', icon: '⚡', url: '', needsKey: 'Go to mcp.zapier.com, make your MCP server, copy its address and paste it in the address box', desc: 'Connect 8,000+ apps (Gmail, Sheets, Calendar…) through your Zapier account', manual: true },
 ];
+const connOf = c => CONNECTOR_CATALOG.find(x => x.name === c.name) || {};
 // ---- connectors: talk to MCP servers over the internet (JSON-RPC) ----
 let mcpId = 0; const mcpSid = {};
 async function mcpRPC(c, method, params, notify) {
@@ -801,6 +811,9 @@ async function runCustom(p, q) {
 }
 // ---- deciding which plug-ins to use for a message ----
 // built-in plug-ins: fast word matching. Your own plug-ins and connectors: the cloud brain picks (one quick call).
+function webConnectorTools(qtext) { // e.g. Exa: searched together with OMEGA's own web search
+  return plugSettings().conn.filter(c => c.web).map(c => { const t = (c.tools || []).find(t => /search/i.test(t.name)) || { name: 'web_search_exa' }; return ['conn:' + c.id, async () => ({ label: c.name, text: `${c.name.toUpperCase()} WEB SEARCH for "${clip(cleanQuery(qtext), 80)}":\n` + clip(await Promise.race([mcpCall(c, t.name, { query: clip(cleanQuery(qtext), 200), numResults: 5 }), sleep(14000).then(() => { throw new Error('took too long'); })]), 5000), sources: [{ title: c.name + ' search', url: 'https://exa.ai/search?q=' + encodeURIComponent(cleanQuery(qtext)) }] }), `${connOf(c).icon || '🔎'} Searching with ${c.name}`]; });
+}
 function catalogTools(text, qtext) {
   const P = plugSettings();
   return PLUGINS.filter(p => P.on.includes(p.id) && (p.when.test(text) || p.when.test(qtext))).map(p => { const use = p.when.test(text) ? text : qtext; return ['plug:' + p.id, () => p.run(use), `${p.icon} Using ${p.name}`]; });
@@ -808,7 +821,7 @@ function catalogTools(text, qtext) {
 async function routedTools(text, qtext, ui) {
   const P = plugSettings(), cands = [];
   for (const p of P.custom) cands.push({ id: 'p:' + p.id, label: p.name, line: `${p.name}: ${p.desc || 'no description'} | args {"q":"search words"}`, run: a => runCustom(p, a.q || cleanQuery(qtext)) });
-  for (const c of P.conn) for (const t of (c.tools || [])) cands.push({ id: `c:${c.id}:${t.name}`, label: `${c.name} (${t.name})`, line: `${c.name} → ${t.name}: ${t.description} | ${JSON.stringify(shortSchema(t.schema))}`, run: async a => ({ label: c.name, text: `${c.name.toUpperCase()} CONNECTOR, tool ${t.name}:\n` + clip(await mcpCall(c, t.name, a), 6000), sources: [{ title: c.name, url: c.url.replace(/\/mcp\/?$/, '') }] }) });
+  for (const c of P.conn.filter(c => !c.web)) for (const t of (c.tools || [])) cands.push({ id: `c:${c.id}:${t.name}`, label: `${c.name} (${t.name})`, line: `${c.name} → ${t.name}: ${t.description} | ${JSON.stringify(shortSchema(t.schema))}`, run: async a => ({ label: c.name, text: `${c.name.toUpperCase()} CONNECTOR, tool ${t.name}:\n` + clip(await mcpCall(c, t.name, a), 6000), sources: [{ title: c.name, url: c.url.replace(/\/mcp\/?$/, '') }] }) });
   if (!cands.length) return [];
   // only ask the brain when the message actually sounds like one of these tools (fast: most messages skip this)
   const words = new Set((text.toLowerCase().match(/[a-z0-9][a-z0-9_-]{2,}/g) || []).filter(w => !PAST_STOP.has(w) && !STOPW.has(w)));
@@ -837,12 +850,15 @@ function renderPlugins() {
   $('#plugCatalog').innerHTML = PLUGINS.map(p => { const on = P.on.includes(p.id); return `<div class="plugrow"><span class="pic">${p.icon}</span><span class="ptx"><b>${esc(p.name)}</b><span>${esc(p.desc)}</span></span><button type="button" class="${on ? '' : 'primary'}" data-plug="${p.id}">${on ? 'Added ✓' : 'Add'}</button></div>`; }).join('');
   $('#plugCustom').innerHTML = P.custom.map((p, i) => `<div class="plugrow"><span class="pic">🧩</span><span class="ptx"><b>${esc(p.name)}</b><span>${esc(clip(p.desc || p.url, 90))}</span></span><button type="button" data-delcustom="${i}">Remove</button></div>`).join('') || '<p class="hint">None yet.</p>';
   $('#connList').innerHTML = P.conn.map((c, i) => `<div class="plugrow"><span class="pic">🔌</span><span class="ptx"><b>${esc(c.name)}</b><span>${c.tools && c.tools.length ? `${c.tools.length} tools: ${esc(clip(c.tools.map(t => t.name).join(', '), 90))}` : 'Not connected yet'}${c.err ? ' · ⚠️ ' + esc(clip(c.err, 60)) : ''}</span></span><span class="keybtns"><button type="button" data-reconn="${i}">Refresh</button><button type="button" data-delconn="${i}">Remove</button></span></div>`).join('') || '<p class="hint">None yet.</p>';
-  $('#connCatalog').innerHTML = CONNECTOR_CATALOG.map((c, i) => { const has = P.conn.some(x => x.url === c.url); return `<div class="plugrow"><span class="pic">${c.icon}</span><span class="ptx"><b>${esc(c.name)}</b><span>${esc(c.desc)}</span></span><button type="button" class="${has ? '' : 'primary'}" data-addconn="${i}" ${has ? 'disabled' : ''}>${has ? 'Added ✓' : 'Add'}</button></div>`; }).join('');
+  $('#connCatalog').innerHTML = CONNECTOR_CATALOG.map((c, i) => { const has = P.conn.some(x => x.name === c.name); return `<div class="plugrow"><span class="pic">${c.icon}</span><span class="ptx"><b>${esc(c.name)}</b><span>${esc(c.desc)}${c.needsKey ? ' · 🔑 needs your key' : ''}</span></span><button type="button" class="${has ? '' : 'primary'}" data-addconn="${i}" ${has ? 'disabled' : ''}>${has ? 'Added ✓' : 'Add'}</button></div>`; }).join('');
   $('#plugCount').textContent = P.on.length + P.custom.length + P.conn.length ? `${P.on.length + P.custom.length + P.conn.length} added` : '';
 }
 async function addConnector(c, msgEl) {
   const P = plugSettings();
-  const item = { id: 'c' + Date.now().toString(36), name: c.name || new URL(c.url).hostname, url: c.url, token: c.token || '', tools: [] };
+  let url = c.url, token = c.token || ''; const cat = connOf(c);
+  if (/\{key\}/.test(url)) { if (!token) { msgEl.textContent = '🔑 Paste your key in the Token box first.'; return; } url = url.replace('{key}', encodeURIComponent(token)); token = ''; }
+  else if (token && cat.keyUrl) url = cat.keyUrl;
+  const item = { id: 'c' + Date.now().toString(36), name: c.name || new URL(url).hostname, url, token, tools: [], web: !!cat.web };
   msgEl.textContent = `Connecting to ${item.name}…`;
   try { await mcpConnect(item); item.err = ''; P.conn.push(item); plugSave(); msgEl.textContent = `✅ Connected to ${item.name}: ${item.tools.length} tools. Just ask OMEGA and it will use them when they fit.`; }
   catch (e) { msgEl.textContent = `Couldn't connect to ${item.name}: ${e.message}`; }
@@ -859,7 +875,11 @@ function wirePlugins() {
     plugSettings().custom.push({ id: 'p' + Date.now().toString(36), name: name.slice(0, 40), url: /\{q\}/.test(url) ? url : url + (url.includes('?') ? '&' : '?') + 'q={q}', desc: desc.slice(0, 200) });
     plugSave(); $('#cName').value = $('#cUrl').value = $('#cDesc').value = ''; $('#customMsg').textContent = `✅ Added ${name}. OMEGA will use it when your message fits "${clip(desc || name, 60)}".`; renderPlugins();
   };
-  $('#connCatalog').onclick = e => { const b = e.target.closest('[data-addconn]'); if (b) addConnector(CONNECTOR_CATALOG[+b.dataset.addconn], $('#connMsg')); };
+  $('#connCatalog').onclick = e => {
+    const b = e.target.closest('[data-addconn]'); if (!b) return; const c = CONNECTOR_CATALOG[+b.dataset.addconn];
+    if (c.needsKey) { $('#connName').value = c.name; $('#connUrl').value = c.url; $('#connMsg').textContent = '🔑 ' + c.needsKey + (c.manual ? '' : ', then tap Connect.'); (c.manual ? $('#connUrl') : $('#connToken')).focus(); return; }
+    addConnector(c, $('#connMsg'));
+  };
   $('#addConn').onclick = () => { const url = $('#connUrl').value.trim(); if (!/^https:\/\//i.test(url)) { $('#connMsg').textContent = 'Paste the connector address (it starts with https://)'; return; } addConnector({ name: $('#connName').value.trim(), url, token: $('#connToken').value.trim() }, $('#connMsg')).then(() => { $('#connUrl').value = $('#connName').value = $('#connToken').value = ''; }); };
   $('#connList').onclick = async e => {
     const P = plugSettings(), d = e.target.closest('[data-delconn]'), r = e.target.closest('[data-reconn]');
@@ -1978,6 +1998,7 @@ async function send(opts = {}) {
       const tools = offlineish || !settings.live ? [] : decideTools(qtext).filter(t => toolOn(t[0]));
       if (!offlineish && anyPlug) {
         tools.push(...catalogTools(text, qtext));
+        if (tools.some(t => ['web', 'news', 'research'].includes(t[0]))) tools.push(...webConnectorTools(qtext));
         if (P0.custom.length || P0.conn.length) { ui.work.hidden = false; ui.wt.textContent = '🧩 Checking your plug-ins…'; const rt = await routedTools(text, qtext, ui); tools.push(...rt); }
       }
       if (chat) chat.lastTopic = tools.length ? clip(cleanQuery(qtext), 120) : '';
