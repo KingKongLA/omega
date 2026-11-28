@@ -7,7 +7,7 @@ const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.89';
 const WLLAMA_URL = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/index.js';
 const WLLAMA_WASM = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@4.0.0/esm/wasm/wllama.wasm';
 const PROXY = 'https://proxy.cors.dev/';
-const VERSION = '3.9.0';
+const VERSION = '3.9.1';
 
 const MODELS = [
   { key: 'cpu-qwen3-0.6b', engine: 'cpu', name: 'Qwen3 0.6B', repo: 'unsloth/Qwen3-0.6B-GGUF', file: 'Qwen3-0.6B-Q4_K_M.gguf', sizeMB: 400, memMB: 650, thinking: true, desc: 'Recommended for phones and tablets. Runs on the processor, so it does not crash.' },
@@ -810,14 +810,22 @@ async function routedTools(text, qtext, ui) {
   for (const p of P.custom) cands.push({ id: 'p:' + p.id, label: p.name, line: `${p.name}: ${p.desc || 'no description'} | args {"q":"search words"}`, run: a => runCustom(p, a.q || cleanQuery(qtext)) });
   for (const c of P.conn) for (const t of (c.tools || [])) cands.push({ id: `c:${c.id}:${t.name}`, label: `${c.name} (${t.name})`, line: `${c.name} → ${t.name}: ${t.description} | ${JSON.stringify(shortSchema(t.schema))}`, run: async a => ({ label: c.name, text: `${c.name.toUpperCase()} CONNECTOR, tool ${t.name}:\n` + clip(await mcpCall(c, t.name, a), 6000), sources: [{ title: c.name, url: c.url.replace(/\/mcp\/?$/, '') }] }) });
   if (!cands.length) return [];
+  // only ask the brain when the message actually sounds like one of these tools (fast: most messages skip this)
+  const words = new Set((text.toLowerCase().match(/[a-z0-9][a-z0-9_-]{2,}/g) || []).filter(w => !PAST_STOP.has(w) && !STOPW.has(w)));
+  if (/\b[\w.-]+\/[\w.-]+\b/.test(text)) words.add('repository').add('github');
+  const fits = c => { const desc = (c.label + ' ' + c.line).toLowerCase(); if (desc.includes(c.label.toLowerCase().split(/[\s(]/)[0]) && text.toLowerCase().includes(c.label.toLowerCase().split(/[\s(]/)[0])) return 9; let n = 0; for (const w of words) if (w.length >= 4 && desc.includes(w.replace(/s$/, ''))) n++; return n; };
+  const scored = cands.map(c => [c, fits(c)]).filter(([, s]) => s >= 2);
+  if (!scored.length) return [];
+  if (ui) step(ui, '🧩 Picking the right plug-in');
   if (!cloudOn()) { // no cloud brain: only your own plug-ins, when their name is in the message
     return cands.filter(c => c.id.startsWith('p:') && new RegExp('\\b' + c.label.split(/\s+/)[0].replace(/[^\w]/g, '') + '\\b', 'i').test(text)).slice(0, 2).map(c => [c.id, () => c.run({ q: cleanQuery(qtext) }), `🧩 Using ${c.label}`]);
   }
-  const sys = 'You decide which of the user\'s tools (if any) would really help answer their latest message. Only pick a tool when it clearly fits; most messages need none. Fill in the args from the message.\nTools (id | what it does | args):\n' + cands.map((c, i) => `${i + 1}. ${c.id} | ${c.line}`).join('\n') + '\nReply with JSON only: {"calls":[{"id":"...","args":{}}]} with at most 2 calls, or {"calls":[]}';
+  const offer = scored.sort((x, y) => y[1] - x[1]).slice(0, 8).map(([c]) => c);
+  const sys = 'You decide which of the user\'s tools (if any) would really help answer their latest message. Only pick a tool when it clearly fits; most messages need none. Fill in the args from the message.\nTools (id | what it does | args):\n' + offer.map((c, i) => `${i + 1}. ${c.id} | ${c.line}`).join('\n') + '\nReply with JSON only: {"calls":[{"id":"...","args":{}}]} with at most 2 calls, or {"calls":[]}';
   const prev = prevUserText();
   const o = { maxTokens: 300, temperature: 0, bg: true, onText: () => { } };
-  let out = '';
-  try { out = await Promise.race([cloudChat([{ role: 'system', content: sys }, { role: 'user', content: (prev ? `(Earlier: ${clip(prev, 200)})\n` : '') + clip(text, 1200) }], o), sleep(12000).then(() => '')]); } catch (_) { return []; }
+  let out = ''; const cands0 = cands;
+  try { out = await Promise.race([cloudChat([{ role: 'system', content: sys }, { role: 'user', content: (prev ? `(Earlier: ${clip(prev, 200)})\n` : '') + clip(text, 1200) }], o), sleep(30000).then(() => '')]); } catch (_) { return []; }
   const j = thinkStrip(out || '').match(/\{[\s\S]*\}/); if (!j) return [];
   let r; try { r = JSON.parse(j[0]); } catch (_) { return []; }
   return (Array.isArray(r.calls) ? r.calls : []).slice(0, 2).map(x => { const c = cands.find(c => c.id === x.id); return c ? [c.id, () => c.run(x.args && typeof x.args === 'object' ? x.args : {}), `🧩 Using ${c.label}`] : null; }).filter(Boolean);

@@ -1,6 +1,6 @@
 // Offline support: keeps OMEGA's app files and the brain engine (wllama) on the device.
 // The brain itself is saved by wllama in the browser's private file storage.
-const CACHE = 'omega-shell-v41';
+const CACHE = 'omega-shell-v42';
 const ENGINE = 'omega-engine-v1';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'games.js', 'play.html', 'worker.js', 'manifest.webmanifest', 'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'video.js', 'ffmpeg/ffmpeg.js', 'ffmpeg/814.ffmpeg.js'];
 // 'reload' skips the browser's 10-minute cache, so the saved copy is always the newest version
